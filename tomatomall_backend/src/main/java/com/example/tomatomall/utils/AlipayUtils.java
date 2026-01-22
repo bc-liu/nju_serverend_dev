@@ -11,17 +11,21 @@ import com.example.tomatomall.exception.TomatoMallException;
 import com.example.tomatomall.po.Orders;
 import com.example.tomatomall.service.OrdersService;
 import com.example.tomatomall.vo.PayResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import javax.servlet.http.HttpServletRequest;
 import java.time.ZoneId;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 import static com.alipay.api.AlipayConstants.FORMAT;
 import static com.alipay.api.AlipayConstants.FORMAT_JSON;
@@ -45,6 +49,12 @@ public class AlipayUtils {
 
     @Autowired
     private OrdersService ordersService;
+
+    @Autowired(required = false)
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     public PayResponse pay(Integer orderId) {
         Orders orders = ordersRepository.findById(orderId).orElseThrow(TomatoMallException::orderNotFound);
@@ -112,7 +122,8 @@ public class AlipayUtils {
 
     public String payNotify(HttpServletRequest request) throws Exception {
 
-        if (request.getParameter("trade_status").equals("TRADE_SUCCESS")) {
+        String tradeStatus = request.getParameter("trade_status");
+        if ("TRADE_SUCCESS".equals(tradeStatus)) {
             System.out.println("=========支付宝异步回调========");
             Map<String, String> params = new HashMap<>();
             Map<String, String[]> requestParams = request.getParameterMap();
@@ -136,9 +147,46 @@ public class AlipayUtils {
                 System.out.println("买家付款金额: " + params.get("buyer_pay_amount"));
 
                 // 设置订单为SUCCESS
-                ordersService.updateOrderSuccess(Integer.parseInt(params.get("out_trade_no")));
+                Integer orderId = Integer.parseInt(params.get("out_trade_no"));
+                ordersService.updateOrderSuccess(orderId);
+
+                CompletableFuture.runAsync(() -> publishOrderPaidEvent(orderId, params));
             }
         }
         return "success";
+    }
+
+    public void publishOrderPaidEvent(Integer orderId, String tradeNo) {
+        Map<String, String> params = new HashMap<>();
+        if (tradeNo != null) {
+            params.put("trade_no", tradeNo);
+        }
+        publishOrderPaidEvent(orderId, params);
+    }
+
+    private void publishOrderPaidEvent(Integer orderId, Map<String, String> alipayParams) {
+        if (kafkaTemplate == null) {
+            return;
+        }
+        try {
+            Orders orders = ordersRepository.findById(orderId).orElse(null);
+            if (orders == null) {
+                return;
+            }
+
+            Map<String, Object> event = new HashMap<>();
+            event.put("eventType", "OrderPaid");
+            event.put("orderId", orderId);
+            event.put("userId", orders.getUserId());
+            event.put("totalAmount", orders.getTotalAmount());
+            event.put("paymentMethod", "ALIPAY");
+            event.put("status", "SUCCESS");
+            event.put("paidTime", LocalDateTime.now());
+            event.put("tradeNo", alipayParams.get("trade_no"));
+
+            kafkaTemplate.send("tomatomall.order.paid", String.valueOf(orderId),
+                    objectMapper.writeValueAsString(event));
+        } catch (Exception ignored) {
+        }
     }
 }

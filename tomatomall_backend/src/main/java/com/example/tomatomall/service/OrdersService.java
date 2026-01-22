@@ -9,4 +9,6 @@ public interface OrdersService {
     public List<OrdersVO> getPENDINGOrder();
 
     void updateOrderSuccess(int orderId);
+
+    void cancelPendingOrder(int orderId);
 }
