@@ -33,7 +33,7 @@ import static com.alipay.api.AlipayConstants.FORMAT_JSON;
 public class AlipayUtils {
     private String appId;
     private String privateKey;
-    private String AlipayPublicKey;
+    private String alipayPublicKey;
     private String charset;
     private String signType;
     private String notifyUrl;
@@ -46,11 +46,10 @@ public class AlipayUtils {
     @Autowired
     private OrdersService ordersService;
 
-
-    public PayResponse pay(Integer orderId){
+    public PayResponse pay(Integer orderId) {
         Orders orders = ordersRepository.findById(orderId).orElseThrow(TomatoMallException::orderNotFound);
 
-        if(!Objects.equals(orders.getStatus(), "PENDING")){
+        if (!Objects.equals(orders.getStatus(), "PENDING")) {
             return null;
         }
 
@@ -61,35 +60,34 @@ public class AlipayUtils {
                 .toInstant()
                 .toEpochMilli();
 
-
         long diff = currentTime - createTime;
 
-//// 判断是否超过 30 分钟（30 * 60 * 1000 = 1,800,000 毫秒）
-//        if (diff > 30 * 60 * 1000L) {
-//            ordersRepository.deleteById(orderId);
-//            return null;
-//        }
+        //// 判断是否超过 30 分钟（30 * 60 * 1000 = 1,800,000 毫秒）
+        // if (diff > 30 * 60 * 1000L) {
+        // ordersRepository.deleteById(orderId);
+        // return null;
+        // }
 
         AliPay aliPay = new AliPay();
         aliPay.setTraceNo(String.valueOf(orderId));
         aliPay.setTotalAmount(orders.getTotalAmount().doubleValue());
         aliPay.setSubject("番茄商城订单支付-" + orderId);
 
-
         // 1. 创建Client，通用SDK提供的Client，负责调用支付宝的API
         AlipayClient alipayClient = new DefaultAlipayClient(serverUrl, appId,
-                privateKey, FORMAT_JSON, charset, AlipayPublicKey, signType);
+                privateKey, FORMAT_JSON, charset, alipayPublicKey, signType);
         // 2. 创建 Request并设置Request参数
-        AlipayTradePagePayRequest request = new AlipayTradePagePayRequest();  // 发送请求的 Request类
+        AlipayTradePagePayRequest request = new AlipayTradePagePayRequest(); // 发送请求的 Request类
         request.setNotifyUrl(notifyUrl);
-        String returnUrlWithIdAndAmount = returnUrl + "?" + "orderId=" + aliPay.getTraceNo() + "&" + "amount=" + aliPay.getTotalAmount() ;
+        String returnUrlWithIdAndAmount = returnUrl + "?" + "orderId=" + aliPay.getTraceNo() + "&" + "amount="
+                + aliPay.getTotalAmount();
         request.setReturnUrl(returnUrlWithIdAndAmount);
         JSONObject bizContent = new JSONObject();
-        bizContent.put("out_trade_no", aliPay.getTraceNo());  // 我们自己生成的订单编号
+        bizContent.put("out_trade_no", aliPay.getTraceNo()); // 我们自己生成的订单编号
         bizContent.put("total_amount", String.valueOf(aliPay.getTotalAmount())); // 订单的总金额
-        bizContent.put("subject", aliPay.getSubject());   // 支付的名称
+        bizContent.put("subject", aliPay.getSubject()); // 支付的名称
         bizContent.put("body", null);
-        bizContent.put("product_code", "FAST_INSTANT_TRADE_PAY");  // 固定配置
+        bizContent.put("product_code", "FAST_INSTANT_TRADE_PAY"); // 固定配置
         request.setBizContent(bizContent.toString());
         // 执行请求，拿到响应的结果，返回给浏览器
         String form = "";
@@ -98,10 +96,10 @@ public class AlipayUtils {
         } catch (AlipayApiException e) {
             e.printStackTrace();
         }
-//        httpResponse.setContentType("text/html;charset=" + charset);
-//        httpResponse.getWriter().write(form);// 直接将完整的表单html输出到页面
-//        httpResponse.getWriter().flush();
-//        httpResponse.getWriter().close();
+        // httpResponse.setContentType("text/html;charset=" + charset);
+        // httpResponse.getWriter().write(form);// 直接将完整的表单html输出到页面
+        // httpResponse.getWriter().flush();
+        // httpResponse.getWriter().close();
 
         PayResponse payResponse = new PayResponse();
         payResponse.setOrderId(orderId);
@@ -124,7 +122,7 @@ public class AlipayUtils {
             }
             String sign = params.get("sign");
             String content = AlipaySignature.getSignCheckContentV1(params);
-            boolean checkSignature = AlipaySignature.rsa256CheckContent(content, sign, AlipayPublicKey, "UTF-8"); // 验证签名
+            boolean checkSignature = AlipaySignature.rsa256CheckContent(content, sign, alipayPublicKey, "UTF-8"); // 验证签名
             // 支付宝验签
             if (checkSignature) {
                 // 验签通过 可做自己需要的操作
@@ -137,7 +135,7 @@ public class AlipayUtils {
                 System.out.println("买家付款时间: " + params.get("gmt_payment"));
                 System.out.println("买家付款金额: " + params.get("buyer_pay_amount"));
 
-                //设置订单为SUCCESS
+                // 设置订单为SUCCESS
                 ordersService.updateOrderSuccess(Integer.parseInt(params.get("out_trade_no")));
             }
         }
