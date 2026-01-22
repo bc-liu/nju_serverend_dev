@@ -1,5 +1,6 @@
 package com.example.tomatomall.controller;
 
+import annotation.RequireRole;
 import com.example.tomatomall.service.AccountService;
 import com.example.tomatomall.vo.AccountVO;
 import com.example.tomatomall.vo.PasswordVO;
@@ -37,6 +38,7 @@ public class AccountController {
     /**
      * 更新用户信息
      */
+    @RequireRole({"ADMIN", "USER"})
     @PutMapping()
     public Response<String> updateUser(@RequestBody AccountVO accountVO) {
         return Response.buildSuccess(accountService.updateUser(accountVO));
