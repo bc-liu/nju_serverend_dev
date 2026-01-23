@@ -5,7 +5,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-
 @Configuration
 public class TomatoWebMvcConfig implements WebMvcConfigurer {
     @Autowired
@@ -19,6 +18,7 @@ public class TomatoWebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns("/upload")
                 .excludePathPatterns("/api/orders/notify")
                 .excludePathPatterns("/api/orders/returnUrl")
+                .excludePathPatterns("/api/statistics/**")
                 .excludePathPatterns("/favicon.ico")
                 .order(1);
     }
