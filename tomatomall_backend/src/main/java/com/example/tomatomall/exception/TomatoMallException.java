@@ -50,4 +50,8 @@ public class TomatoMallException extends RuntimeException {
   public static TomatoMallException passwordNotMatch(){
     return new TomatoMallException("密码错误", "400");
   }
+
+  public static TomatoMallException noPermission() {
+    return new TomatoMallException("权限不足", "403");
+  }
   }
