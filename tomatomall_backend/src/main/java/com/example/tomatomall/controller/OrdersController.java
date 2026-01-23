@@ -42,13 +42,31 @@ public class OrdersController {
     }
 
     @GetMapping("/returnUrl")
-    public String returnUrl() {
+    public String returnUrl(@RequestParam(required = false) Integer orderId,
+                            @RequestParam(required = false) String tradeNo) {
+        if (orderId != null) {
+            ordersService.updateOrderSuccess(orderId);
+            alipayUtils.publishOrderPaidEvent(orderId, tradeNo);
+        }
         return "支付成功";
     }
 
     @GetMapping("/pendingOrders")
     public Response<List<OrdersVO>> getPendingOrder() {
         return Response.buildSuccess(ordersService.getPENDINGOrder());
+    }
+
+    @PostMapping("/{orderId}/cancel")
+    public Response<String> cancel(@PathVariable Integer orderId) {
+        ordersService.cancelPendingOrder(orderId);
+        return Response.buildSuccess("取消成功");
+    }
+
+    @PostMapping("/{orderId}/mockPaid")
+    public Response<String> mockPaid(@PathVariable Integer orderId) {
+        ordersService.updateOrderSuccess(orderId);
+        alipayUtils.publishOrderPaidEvent(orderId, "MOCK");
+        return Response.buildSuccess("支付成功");
     }
 
 //    @PostMapping("/notify")

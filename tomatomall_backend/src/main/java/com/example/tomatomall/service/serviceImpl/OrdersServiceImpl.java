@@ -1,13 +1,20 @@
 package com.example.tomatomall.service.serviceImpl;
 
+import com.example.tomatomall.Repository.CartsOrdersRelationRepository;
 import com.example.tomatomall.Repository.OrdersRepository;
+import com.example.tomatomall.Repository.StockpileRepository;
+import com.example.tomatomall.po.Cart;
 import com.example.tomatomall.po.Account;
+import com.example.tomatomall.po.CartsOrdersRelation;
 import com.example.tomatomall.po.Orders;
+import com.example.tomatomall.po.Product;
+import com.example.tomatomall.po.Stockpile;
 import com.example.tomatomall.service.OrdersService;
 import com.example.tomatomall.utils.SecurityUtil;
 import com.example.tomatomall.vo.OrdersVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +27,12 @@ public class OrdersServiceImpl implements OrdersService {
 
     @Autowired
     OrdersRepository ordersRepository;
+
+    @Autowired
+    CartsOrdersRelationRepository cartsOrdersRelationRepository;
+
+    @Autowired
+    StockpileRepository stockpileRepository;
 
     @Override
     public List<OrdersVO> getPENDINGOrder() {
@@ -46,5 +59,45 @@ public class OrdersServiceImpl implements OrdersService {
         ordersRepository.save(order);
     }
 
+    @Override
+    @Transactional
+    public void cancelPendingOrder(int orderId) {
+        Orders order = ordersRepository.findById(orderId).orElse(null);
+        if (order == null) {
+            return;
+        }
+        if (!"PENDING".equals(order.getStatus())) {
+            return;
+        }
+
+        List<CartsOrdersRelation> relations = cartsOrdersRelationRepository.findByOrdersOrderId(orderId);
+        if (relations != null) {
+            for (CartsOrdersRelation relation : relations) {
+                Cart cart = relation.getCartItem();
+                if (cart == null) {
+                    continue;
+                }
+                Product product = cart.getProduct();
+                if (product == null) {
+                    continue;
+                }
+                Stockpile stockpile = product.getStockpile();
+                if (stockpile == null) {
+                    continue;
+                }
+                Integer quantity = cart.getQuantity();
+                if (quantity == null || quantity <= 0) {
+                    continue;
+                }
+                stockpile.setAmount(stockpile.getAmount() + quantity);
+                stockpile.setFrozen(Math.max(stockpile.getFrozen() - quantity, 0));
+                stockpileRepository.save(stockpile);
+            }
+            cartsOrdersRelationRepository.deleteAll(relations);
+        }
+
+        order.setStatus("CANCELLED");
+        ordersRepository.save(order);
+    }
 
 }

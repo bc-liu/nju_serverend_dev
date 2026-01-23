@@ -12,8 +12,7 @@ import javax.persistence.*;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "advertisements")
-public class Advertisements {
+@Table(name = "advertisements")public class Advertisements {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
