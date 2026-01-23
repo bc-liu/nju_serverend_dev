@@ -1,4 +1,4 @@
-import {createRouter, createWebHistory} from 'vue-router';
+import { createRouter, createWebHistory } from 'vue-router';
 import Home from '../views/user/Home.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
@@ -68,17 +68,17 @@ const router = createRouter({
     }, {
         path: '/home',
         component: () => import('../views/user/Home.vue'),
-        meta: {title: 'home页'}
+        meta: { title: 'home页' }
     }, {
         path: '/404',
         name: '404',
         component: () => import('../views/NotFound.vue'),
-        meta: {title: '404'}
+        meta: { title: '404' }
     }, {
         path: '/admin/home',
         name: 'adminHome',
         component: () => import('../views/admin/Home.vue'),
-        meta: {title: 'adminHome'}
+        meta: { title: 'adminHome' }
     }, {
         path: '/user/pendingOrders',
         name: 'pendingOrders',
@@ -117,7 +117,7 @@ router.beforeEach((to, _, next) => {
             next();
         } else if (to.path === '/register') {
             next()
-        } else if(to.path === '/payment/success') {
+        } else if (to.path === '/payment/success') {
             next()
         }
         else {
@@ -126,4 +126,4 @@ router.beforeEach((to, _, next) => {
     }
 })
 
-export {router};
+export { router };

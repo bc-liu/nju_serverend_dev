@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API调用统计</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f5f7fa;
+      color: #333;
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 40px 0;
+      margin-bottom: 30px;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+    
+    header h1 {
+      text-align: center;
+      font-size: 2.5rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    
+    header p {
+      text-align: center;
+      font-size: 1.1rem;
+      opacity: 0.9;
+    }
+    
+    .filters {
+      background: white;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      margin-bottom: 30px;
+    }
+    
+    .filters h2 {
+      margin-bottom: 20px;
+      color: #444;
+      font-size: 1.3rem;
+    }
+    
+    .filter-buttons {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 25px;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      outline: none;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    
+    .btn-secondary:hover {
+      background: #e0e0e0;
+      transform: translateY(-2px);
+    }
+    
+    .api-inputs {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .form-group {
+      flex: 1;
+      min-width: 200px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #555;
+    }
+    
+    .form-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+    
+    .form-input:focus {
+      border-color: #667eea;
+      box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+      outline: none;
+    }
+    
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 0;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    }
+    
+    .spinner {
+      width: 60px;
+      height: 60px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .loading p {
+      color: #666;
+      font-size: 16px;
+    }
+    
+    .error {
+      background: #fff3f3;
+      border-left: 4px solid #ff4d4f;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 0 6px 6px 0;
+      color: #ff4d4f;
+    }
+    
+    .statistics-content {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      margin-bottom: 30px;
+    }
+    
+    .statistics-content h2 {
+      margin-bottom: 25px;
+      color: #444;
+      font-size: 1.5rem;
+    }
+    
+    .all-statistics .statistics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    
+    .statistic-card {
+      background: #f9f9f9;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 20px;
+      transition: all 0.3s ease;
+    }
+    
+    .statistic-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+      border-color: #667eea;
+    }
+    
+    .statistic-card h3 {
+      color: #667eea;
+      margin-bottom: 15px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 10px;
+    }
+    
+    .statistic-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .statistic-item:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+    
+    .label {
+      font-weight: 500;
+      color: #666;
+      font-size: 14px;
+    }
+    
+    .value {
+      font-weight: 600;
+      color: #333;
+      font-size: 14px;
+    }
+    
+    .single-statistics .statistic-detail {
+      background: #f9f9f9;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 30px;
+    }
+    
+    .single-statistics .statistic-item {
+      padding: 12px 0;
+      font-size: 16px;
+    }
+    
+    .single-statistics .label {
+      font-size: 15px;
+    }
+    
+    .single-statistics .value {
+      font-size: 15px;
+      color: #667eea;
+    }
+    
+    footer {
+      text-align: center;
+      padding: 30px 0;
+      color: #666;
+      font-size: 14px;
+    }
+    
+    @media (max-width: 768px) {
+      .container {
+        padding: 15px;
+      }
+      
+      header h1 {
+        font-size: 2rem;
+      }
+      
+      .filters {
+        padding: 20px;
+      }
+      
+      .filter-buttons {
+        flex-direction: column;
+      }
+      
+      .api-inputs {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      
+      .form-group {
+        width: 100%;
+      }
+      
+      .all-statistics .statistics-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .statistics-content {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>API调用统计系统</h1>
+      <p>实时监控和分析接口调用情况</p>
+    </header>
+    
+    <div class="filters">
+      <h2>查询选项</h2>
+      <div class="filter-buttons">
+        <button class="btn btn-primary" onclick="fetchAllStatistics()">
+          查看所有接口统计
+        </button>
+      </div>
+      <div class="api-inputs">
+        <div class="form-group">
+          <label for="className">Controller名称</label>
+          <input 
+            type="text" 
+            id="className" 
+            class="form-input"
+            placeholder="例如: AccountController"
+          >
+        </div>
+        <div class="form-group">
+          <label for="methodName">方法名称</label>
+          <input 
+            type="text" 
+            id="methodName" 
+            class="form-input"
+            placeholder="例如: login"
+          >
+        </div>
+        <button class="btn btn-secondary" onclick="fetchApiStatistics()">
+          查看指定接口统计
+        </button>
+      </div>
+    </div>
+    
+    <div id="loading" style="display: none;" class="loading">
+      <div class="spinner"></div>
+      <p>加载中...</p>
+    </div>
+    
+    <div id="error" style="display: none;" class="error"></div>
+    
+    <div id="statisticsContent" class="statistics-content" style="display: none;">
+      <div id="allStatistics" style="display: none;" class="all-statistics">
+        <h2>所有接口统计数据</h2>
+        <div class="statistics-grid" id="statisticsGrid"></div>
+      </div>
+      
+      <div id="singleStatistics" style="display: none;" class="single-statistics">
+        <h2 id="apiTitle"></h2>
+        <div class="statistic-detail" id="statisticDetail"></div>
+      </div>
+    </div>
+    
+    <footer>
+      <p>© 2026 API调用统计系统 | 设计与开发</p>
+    </footer>
+  </div>
+  
+  <script>
+    function showLoading() {
+      document.getElementById('loading').style.display = 'flex';
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('statisticsContent').style.display = 'none';
+    }
+    
+    function showError(message) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').textContent = message;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('statisticsContent').style.display = 'none';
+    }
+    
+    function showStatistics() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('statisticsContent').style.display = 'block';
+    }
+    
+    function formatTime(timestamp) {
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    }
+    
+    async function fetchAllStatistics() {
+      showLoading();
+      
+      try {
+        const response = await fetch('http://localhost:8080/api/statistics/all');
+        if (!response.ok) {
+          throw new Error('获取统计数据失败');
+        }
+        const data = await response.json();
+        
+        showStatistics();
+        document.getElementById('allStatistics').style.display = 'block';
+        document.getElementById('singleStatistics').style.display = 'none';
+        
+        const statisticsGrid = document.getElementById('statisticsGrid');
+        statisticsGrid.innerHTML = '';
+        
+        const statistics = data.data;
+        for (const api in statistics) {
+          const stats = statistics[api];
+          const card = document.createElement('div');
+          card.className = 'statistic-card';
+          card.innerHTML = `
+            <h3>${api}</h3>
+            <div class="statistic-item">
+              <span class="label">调用次数:</span>
+              <span class="value">${stats.count}</span>
+            </div>
+            <div class="statistic-item">
+              <span class="label">总响应时间:</span>
+              <span class="value">${stats.totalTime}ms</span>
+            </div>
+            <div class="statistic-item">
+              <span class="label">平均响应时间:</span>
+              <span class="value">${stats.avgTime.toFixed(2)}ms</span>
+            </div>
+            <div class="statistic-item">
+              <span class="label">最近调用时间:</span>
+              <span class="value">${formatTime(stats.lastCall)}</span>
+            </div>
+          `;
+          statisticsGrid.appendChild(card);
+        }
+        
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '未知错误');
+      }
+    }
+    
+    async function fetchApiStatistics() {
+      const className = document.getElementById('className').value;
+      const methodName = document.getElementById('methodName').value;
+      
+      if (!className || !methodName) {
+        showError('请输入Controller名称和方法名称');
+        return;
+      }
+      
+      showLoading();
+      
+      try {
+        const response = await fetch(
+          `http://localhost:8080/api/statistics/api?className=${className}&methodName=${methodName}`
+        );
+        if (!response.ok) {
+          throw new Error('获取统计数据失败');
+        }
+        const data = await response.json();
+        
+        showStatistics();
+        document.getElementById('allStatistics').style.display = 'none';
+        document.getElementById('singleStatistics').style.display = 'block';
+        
+        document.getElementById('apiTitle').textContent = `${className}:${methodName} 统计数据`;
+        
+        const stats = data.data;
+        const detail = document.getElementById('statisticDetail');
+        detail.innerHTML = `
+          <div class="statistic-item">
+            <span class="label">调用次数:</span>
+            <span class="value">${stats.count}</span>
+          </div>
+          <div class="statistic-item">
+            <span class="label">总响应时间:</span>
+            <span class="value">${stats.totalTime}ms</span>
+          </div>
+          <div class="statistic-item">
+            <span class="label">平均响应时间:</span>
+            <span class="value">${stats.avgTime.toFixed(2)}ms</span>
+          </div>
+          <div class="statistic-item">
+            <span class="label">最近调用时间:</span>
+            <span class="value">${formatTime(stats.lastCall)}</span>
+          </div>
+        `;
+        
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '未知错误');
+      }
+    }
+    
+    // 页面加载时默认获取所有统计数据
+    window.onload = function() {
+      // 可以根据需要取消注释下面的代码，让页面加载时自动获取统计数据
+      // fetchAllStatistics();
+    };
+  </script>
+</body>
+</html>
