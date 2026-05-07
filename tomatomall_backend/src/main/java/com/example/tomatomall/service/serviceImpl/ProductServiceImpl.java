@@ -119,11 +119,10 @@ public class ProductServiceImpl implements ProductService {
             productInRepository.setSpecifications(specifications);
         }
 
-        productRepository.save(productInRepository);
-
-        // 更新缓存
-        ProductVO updatedVO = productInRepository.toVO();
-        redisCacheUtil.setProductCache(String.valueOf(id), updatedVO);
+        // 使用延迟双删策略更新商品
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            productRepository.save(productInRepository);
+        });
 
         return "更新成功";
     }
@@ -159,10 +158,10 @@ public class ProductServiceImpl implements ProductService {
             throw TomatoMallException.productNotFound();
         }
 
-        // 先删除缓存
-        redisCacheUtil.deleteProductCache(String.valueOf(id));
-
-        productRepository.deleteById(id);
+        // 使用延迟双删策略删除商品
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            productRepository.deleteById(id);
+        });
     }
 
     /**
@@ -173,25 +172,21 @@ public class ProductServiceImpl implements ProductService {
     public void adjustStockPile(Integer id, Integer amount) {
         Product product = productRepository.findById(id).orElseThrow(TomatoMallException::productNotFound);
         Stockpile stockpile = product.getStockpile();
-        if (stockpile == null) {
-            Stockpile newStockpile = new Stockpile();
-            newStockpile.setProduct(product);
-            newStockpile.setAmount(amount);
-            newStockpile.setFrozen(0);
-            product.setStockpile(newStockpile);
-            productRepository.save(product);
 
-            // 更新缓存
-            ProductVO updatedVO = product.toVO();
-            redisCacheUtil.setProductCache(String.valueOf(id), updatedVO);
-            return;
-        }
-        product.getStockpile().setAmount(amount);
-        productRepository.save(product);
-
-        // 更新缓存
-        ProductVO updatedVO = product.toVO();
-        redisCacheUtil.setProductCache(String.valueOf(id), updatedVO);
+        // 使用延迟双删策略调整库存
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            if (stockpile == null) {
+                Stockpile newStockpile = new Stockpile();
+                newStockpile.setProduct(product);
+                newStockpile.setAmount(amount);
+                newStockpile.setFrozen(0);
+                product.setStockpile(newStockpile);
+                productRepository.save(product);
+            } else {
+                product.getStockpile().setAmount(amount);
+                productRepository.save(product);
+            }
+        });
     }
 
     @Override
@@ -207,12 +202,12 @@ public class ProductServiceImpl implements ProductService {
     public void addStockPile(ProductVO.StockpileVO stockpileVO) {
         int productID = stockpileVO.getProductId();
         Product product = productRepository.findById(productID).orElseThrow(TomatoMallException::productNotFound);
-        product.setStockpile(stockpileVO.toPO());
-        productRepository.save(product);
 
-        // 更新缓存
-        ProductVO updatedVO = product.toVO();
-        redisCacheUtil.setProductCache(String.valueOf(productID), updatedVO);
+        // 使用延迟双删策略添加库存
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(productID), () -> {
+            product.setStockpile(stockpileVO.toPO());
+            productRepository.save(product);
+        });
     }
 
     @Override

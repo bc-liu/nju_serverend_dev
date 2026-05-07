@@ -6,17 +6,18 @@ TomatoMall 是一个基于 Spring Boot + Vue 的电商系统，包含完整的�
 
 ### 1.1 技术栈
 
-| 分类 | 技术 | 版本 | 说明 |
-|------|------|------|------|
-| 后端 | Spring Boot | 2.7.6 | 基础框架 |
-| 后端 | Spring Data JPA | - | 数据访问 |
-| 后端 | Spring Security | - | 安全框架 |
-| 后端 | Redis | 7.0 | 缓存和令牌存储 |
-| 后端 | Kafka | 3.9.1 | 消息队列 |
-| 后端 | MySQL | 8.0 | 数据库 |
-| 前端 | Vue 3 | 3.5.13 | 前端框架 |
-| 前端 | Element Plus | 2.9.7 | UI组件库 |
-| 前端 | Axios | 1.8.4 | HTTP客户端 |
+| 分类 | 技术            | 版本   | 说明                                                             |
+| ---- | --------------- | ------ | ---------------------------------------------------------------- |
+| 后端 | Spring Boot     | 2.7.6  | 基础框架                                                         |
+| 后端 | Spring Data JPA | -      | 数据访问                                                         |
+| 后端 | Spring Security | -      | 安全框架                                                         |
+| 后端 | Redis           | 7.0    | **缓存和令牌存储**（商品数据缓存、布隆过滤器、Redisson分布式锁） |
+| 后端 | Redisson        | 3.23.4 | 分布式锁框架                                                     |
+| 后端 | Kafka           | 3.9.1  | 消息队列                                                         |
+| 后端 | MySQL           | 8.0    | 数据库                                                           |
+| 前端 | Vue 3           | 3.5.13 | 前端框架                                                         |
+| 前端 | Element Plus    | 2.9.7  | UI组件库                                                         |
+| 前端 | Axios           | 1.8.4  | HTTP客户端                                                       |
 
 ## 2. 部署说明
 
@@ -100,15 +101,15 @@ docker-compose logs backend
 
 后端服务的环境变量配置位于 `docker-compose.yml` 文件中：
 
-| 环境变量 | 说明 | 默认值 |
-|---------|------|-------|
-| SPRING_DATASOURCE_URL | 数据库连接地址 | jdbc:mysql://mysql:3306/tomatomall?characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true |
-| SPRING_DATASOURCE_USERNAME | 数据库用户名 | root |
-| SPRING_DATASOURCE_PASSWORD | 数据库密码 | 123456 |
-| SPRING_REDIS_HOST | Redis主机 | redis |
-| SPRING_REDIS_PORT | Redis端口 | 6379 |
-| SPRING_KAFKA_BOOTSTRAP_SERVERS | Kafka地址 | kafka:9092 |
-| SPRING_KAFKA_CONSUMER_GROUP_ID | Kafka消费者组ID | tomatomall-group |
+| 环境变量                       | 说明            | 默认值                                                                                                                            |
+| ------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| SPRING_DATASOURCE_URL          | 数据库连接地址  | jdbc:mysql://mysql:3306/tomatomall?characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true |
+| SPRING_DATASOURCE_USERNAME     | 数据库用户名    | root                                                                                                                              |
+| SPRING_DATASOURCE_PASSWORD     | 数据库密码      | 123456                                                                                                                            |
+| SPRING_REDIS_HOST              | Redis主机       | redis                                                                                                                             |
+| SPRING_REDIS_PORT              | Redis端口       | 6379                                                                                                                              |
+| SPRING_KAFKA_BOOTSTRAP_SERVERS | Kafka地址       | kafka:9092                                                                                                                        |
+| SPRING_KAFKA_CONSUMER_GROUP_ID | Kafka消费者组ID | tomatomall-group                                                                                                                  |
 
 ## 3. 核心功能说明
 
@@ -122,8 +123,8 @@ docker-compose logs backend
 ### 3.2 商品管理
 
 - 商品列表查询
-- 商品详情查看
-- 商品添加、修改、删除
+- 商品详情查看（**Redis缓存优化**）
+- 商品添加、修改、删除（**延迟双删策略**）
 - 库存管理
 
 ### 3.3 购物车
@@ -669,6 +670,58 @@ docker-compose logs backend
 3. **认证流程**：用户登录 → 生成JWT令牌 → 存储到Redis → 后续请求携带令牌 → 验证令牌 → 授权访问
 4. **消息流程**：订单创建 → 发送Kafka消息 → 消费者处理消息 → 更新库存
 
+### 5.4 Redis缓存优化架构
+
+#### 5.4.1 商品数据缓存策略
+
+- **缓存键**：`product:{id}`
+- **缓存时间**：30-40分钟随机过期时间
+- **缓存空值**：防止缓存穿透，缓存不存在的商品ID
+
+#### 5.4.2 防缓存击穿（Cache Breakdown）
+
+- **Redisson分布式锁**：使用Redisson的RLock实现高性能分布式锁
+- **超时与快速失败**：锁等待超时500ms，超时后快速失败返回null，避免线程长时间阻塞
+- **锁持有时间**：锁自动释放时间10秒，防止死锁
+- **双重检查**：获取锁后再次检查缓存，防止重复加载
+- **Pub/Sub机制**：Redisson内部基于Pub/Sub实现高效唤醒，不再盲目sleep
+- **自动管理**：Redisson自动管理锁释放，确保锁一定会被释放
+
+#### 5.4.3 防缓存穿透（Cache Penetration）
+
+- **布隆过滤器**：使用Redis BitMap实现，过滤不存在的商品ID
+- **空值缓存**：缓存查询结果为空的请求，设置较短过期时间
+
+#### 5.4.4 延迟双删策略（Delayed Double Delete）
+
+- **第一次删除**：在数据库更新前删除缓存
+- **数据库更新**：执行实际的数据库操作
+- **第二次删除**：延迟1秒后再次删除缓存，确保数据一致性
+
+#### 5.4.5 缓存一致性保证
+
+- **写操作同步**：所有商品创建、更新、删除操作同步更新缓存
+- **布隆过滤器维护**：新增商品时自动更新布隆过滤器
+- **初始化加载**：系统启动时自动初始化布隆过滤器
+
+#### 5.4.6 Redisson分布式锁优化
+
+**优化思路**：
+- 引入Redisson的RLock，移除本地锁，完全信任分布式锁的互斥性
+- 使用`RLock.tryLock(waitTime, leaseTime, unit)`指定最大等待时间和锁持有时间
+- 设置合理的等待超时（500ms），超时后快速失败，避免线程长时间阻塞
+
+**技术优势**：
+1. **高性能**：Redisson内部基于Pub/Sub机制实现高效唤醒，减少CPU空转
+2. **可靠性**：锁自动续期（Watchdog机制），防止业务执行时间过长导致锁提前释放
+3. **易用性**：API简洁，自动管理锁释放，无需手动删除锁键
+4. **可扩展**：支持集群模式、哨兵模式等多种Redis部署方式
+
+**配置参数**：
+- 锁等待超时：500ms
+- 锁持有时间：10秒
+- 锁前缀：`lock:product:`
+
 ## 6. 安全说明
 
 ### 6.1 认证与授权
@@ -836,8 +889,8 @@ docker-compose logs backend
 
 ## 10. 版本历史
 
-| 版本 | 日期 | 变更内容 |
-|------|------|----------|
+| 版本   | 日期       | 变更内容 |
+| ------ | ---------- | -------- |
 | v1.0.0 | 2026-01-23 | 初始版本 |
 
 ## 11. 联系与支持

@@ -16,10 +16,10 @@ public class BloomFilterUtil {
 
     // 布隆过滤器名称
     private static final String BLOOM_FILTER_KEY = "bloom:product";
-    
+
     // 布隆过滤器大小（位数组大小）
     private static final int BIT_SIZE = 2 << 28; // 约5.36亿位
-    
+
     // 哈希函数数量
     private static final int HASH_COUNT = 8;
 
@@ -69,11 +69,11 @@ public class BloomFilterUtil {
      */
     private int[] getHashOffsets(String value) {
         int[] offsets = new int[HASH_COUNT];
-        
+
         try {
             MessageDigest md5 = MessageDigest.getInstance("MD5");
             byte[] digest = md5.digest(value.getBytes(StandardCharsets.UTF_8));
-            
+
             // 使用不同的哈希种子生成多个哈希值
             for (int i = 0; i < HASH_COUNT; i++) {
                 // 使用不同的种子生成哈希值
@@ -83,7 +83,7 @@ public class BloomFilterUtil {
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("MD5 algorithm not found", e);
         }
-        
+
         return offsets;
     }
 
