@@ -48,7 +48,7 @@ public class BloomFilterUtil {
     public boolean mightContain(String value) {
         int[] offsets = getHashOffsets(value);
         for (int offset : offsets) {
-            if (!redisTemplate.opsForValue().getBit(BLOOM_FILTER_KEY, offset)) {
+            if (Boolean.FALSE.equals(redisTemplate.opsForValue().getBit(BLOOM_FILTER_KEY, offset))) {
                 return false;
             }
         }
