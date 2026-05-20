@@ -1,8 +1,10 @@
 package com.example.tomatomall.utils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -13,7 +15,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 @Component
-public class RedisCacheUtil {
+public class RedisCacheUtil implements DisposableBean {
 
     @Autowired
     private StringRedisTemplate redisTemplate;
@@ -24,11 +26,17 @@ public class RedisCacheUtil {
     @Autowired
     private RedissonClient redissonClient;
 
+    @Autowired
+    private Cache<String, String> productLocalCache;
+
     // 商品缓存前缀
     private static final String PRODUCT_CACHE_PREFIX = "product:";
 
     // 互斥锁前缀
     private static final String LOCK_PREFIX = "lock:product:";
+
+    // 缓存失效通知频道名称
+    private static final String CACHE_INVALIDATION_CHANNEL = "cache:invalidation:product";
 
     // 默认缓存过期时间（分钟）
     private static final long DEFAULT_EXPIRE_MINUTES = 30;
@@ -39,15 +47,15 @@ public class RedisCacheUtil {
     // 锁等待超时时间（毫秒）
     private static final long LOCK_WAIT_TIME_MS = 500;
 
-    // 锁持有时间（秒）
-    private static final long LOCK_LEASE_TIME_SECONDS = 10;
+    // 锁持有时间（毫秒）—— 修复：统一使用毫秒单位
+    private static final long LOCK_LEASE_TIME_MS = 10 * 1000;
 
     // 延迟双删线程池
     private final ScheduledExecutorService delayedDeleteExecutor = Executors.newScheduledThreadPool(5);
 
     /**
-     * 获取商品缓存（包含防击穿和防穿透逻辑）
-     * 使用Redisson RLock实现分布式锁，支持超时与快速失败
+     * 获取商品缓存（L1 Caffeine + L2 Redis 多级缓存）
+     * 读取顺序：L1本地缓存 → L2 Redis缓存 → 数据库
      */
     public <T> T getProductCache(String key, Class<T> clazz, CacheLoader<T> cacheLoader,
             BloomFilterUtil bloomFilter) {
@@ -58,8 +66,8 @@ public class RedisCacheUtil {
             return null;
         }
 
-        // 2. 查询缓存
-        String cachedValue = redisTemplate.opsForValue().get(cacheKey);
+        // 2. 查询L1本地缓存（Caffeine）
+        String cachedValue = productLocalCache.getIfPresent(cacheKey);
         if (cachedValue != null) {
             if ("null".equals(cachedValue)) {
                 return null;
@@ -67,26 +75,41 @@ public class RedisCacheUtil {
             try {
                 return objectMapper.readValue(cachedValue, clazz);
             } catch (Exception e) {
+                productLocalCache.invalidate(cacheKey);
+            }
+        }
+
+        // 3. 查询L2 Redis缓存
+        cachedValue = redisTemplate.opsForValue().get(cacheKey);
+        if (cachedValue != null) {
+            if ("null".equals(cachedValue)) {
+                productLocalCache.put(cacheKey, "null");
+                return null;
+            }
+            try {
+                T result = objectMapper.readValue(cachedValue, clazz);
+                productLocalCache.put(cacheKey, cachedValue);
+                return result;
+            } catch (Exception e) {
                 redisTemplate.delete(cacheKey);
             }
         }
 
-        // 3. 缓存未命中，尝试获取Redisson分布式锁
+        // 4. L1和L2都未命中，尝试获取Redisson分布式锁
         String lockKey = LOCK_PREFIX + key;
         RLock lock = redissonClient.getLock(lockKey);
 
         try {
-            // 尝试获取锁，设置等待超时和锁持有时间
-            boolean locked = lock.tryLock(LOCK_WAIT_TIME_MS, LOCK_LEASE_TIME_SECONDS, TimeUnit.MILLISECONDS);
+            // 修复：waitTime和leaseTime统一使用毫秒单位
+            boolean locked = lock.tryLock(LOCK_WAIT_TIME_MS, LOCK_LEASE_TIME_MS, TimeUnit.MILLISECONDS);
 
             if (!locked) {
-                // 获取锁超时，快速失败，返回null或兜底数据
                 return null;
             }
 
             try {
-                // 4. 双重检查缓存（防止其他线程已经写入缓存）
-                cachedValue = redisTemplate.opsForValue().get(cacheKey);
+                // 5. 双重检查：先查L1，再查L2
+                cachedValue = productLocalCache.getIfPresent(cacheKey);
                 if (cachedValue != null) {
                     if ("null".equals(cachedValue)) {
                         return null;
@@ -94,14 +117,26 @@ public class RedisCacheUtil {
                     return objectMapper.readValue(cachedValue, clazz);
                 }
 
-                // 5. 查询数据库
+                cachedValue = redisTemplate.opsForValue().get(cacheKey);
+                if (cachedValue != null) {
+                    if ("null".equals(cachedValue)) {
+                        productLocalCache.put(cacheKey, "null");
+                        return null;
+                    }
+                    T result = objectMapper.readValue(cachedValue, clazz);
+                    productLocalCache.put(cacheKey, cachedValue);
+                    return result;
+                }
+
+                // 6. 查询数据库
                 T result = cacheLoader.load();
 
-                // 6. 写入缓存
+                // 7. 写入L2 Redis缓存和L1 Caffeine缓存
                 if (result != null) {
                     String jsonValue = objectMapper.writeValueAsString(result);
                     long expireTime = getRandomExpireTime();
                     redisTemplate.opsForValue().set(cacheKey, jsonValue, expireTime, TimeUnit.MINUTES);
+                    productLocalCache.put(cacheKey, jsonValue);
 
                     if (bloomFilter != null) {
                         bloomFilter.add(key);
@@ -109,12 +144,12 @@ public class RedisCacheUtil {
                 } else {
                     long expireTime = getRandomExpireTime() / 2;
                     redisTemplate.opsForValue().set(cacheKey, "null", expireTime, TimeUnit.MINUTES);
+                    productLocalCache.put(cacheKey, "null");
                 }
 
                 return result;
 
             } finally {
-                // Redisson自动管理锁释放，确保锁一定会被释放
                 if (lock.isHeldByCurrentThread()) {
                     lock.unlock();
                 }
@@ -129,7 +164,7 @@ public class RedisCacheUtil {
     }
 
     /**
-     * 设置商品缓存
+     * 设置商品缓存（同时写入L1和L2）
      */
     public <T> void setProductCache(String key, T value) {
         String cacheKey = PRODUCT_CACHE_PREFIX + key;
@@ -138,9 +173,11 @@ public class RedisCacheUtil {
                 String jsonValue = objectMapper.writeValueAsString(value);
                 long expireTime = getRandomExpireTime();
                 redisTemplate.opsForValue().set(cacheKey, jsonValue, expireTime, TimeUnit.MINUTES);
+                productLocalCache.put(cacheKey, jsonValue);
             } else {
                 long expireTime = getRandomExpireTime() / 2;
                 redisTemplate.opsForValue().set(cacheKey, "null", expireTime, TimeUnit.MINUTES);
+                productLocalCache.put(cacheKey, "null");
             }
         } catch (Exception e) {
             throw new RuntimeException("设置缓存失败: " + e.getMessage(), e);
@@ -148,30 +185,39 @@ public class RedisCacheUtil {
     }
 
     /**
-     * 删除商品缓存
+     * 删除商品缓存（同时删除L1和L2，并通过Pub/Sub通知其他实例清除L1）
      */
     public void deleteProductCache(String key) {
         String cacheKey = PRODUCT_CACHE_PREFIX + key;
+        productLocalCache.invalidate(cacheKey);
         redisTemplate.delete(cacheKey);
+        // 发布缓存失效消息，通知其他实例清除L1本地缓存
+        publishInvalidation(key);
     }
 
     /**
-     * 延迟双删策略
-     * 1. 先删除缓存
+     * 延迟双删策略（同时删除L1和L2，并通过Pub/Sub通知其他实例）
+     * 1. 先删除L1和L2缓存，发布失效通知
      * 2. 更新数据库
-     * 3. 延迟一段时间后再次删除缓存
+     * 3. 延迟一段时间后再次删除L1和L2缓存，再次发布失效通知
      */
     public void delayedDoubleDelete(String key, Runnable databaseUpdate) {
         String cacheKey = PRODUCT_CACHE_PREFIX + key;
 
+        // 第一次删除L1和L2，并通知其他实例
+        productLocalCache.invalidate(cacheKey);
         redisTemplate.delete(cacheKey);
+        publishInvalidation(key);
 
         if (databaseUpdate != null) {
             databaseUpdate.run();
         }
 
+        // 延迟后再次删除L1和L2，并通知其他实例
         delayedDeleteExecutor.schedule(() -> {
+            productLocalCache.invalidate(cacheKey);
             redisTemplate.delete(cacheKey);
+            publishInvalidation(key);
         }, 1, TimeUnit.SECONDS);
     }
 
@@ -204,12 +250,39 @@ public class RedisCacheUtil {
     }
 
     /**
+     * 发布缓存失效消息到Redis Pub/Sub，通知其他实例清除L1本地缓存
+     */
+    private void publishInvalidation(String key) {
+        try {
+            redisTemplate.convertAndSend(CACHE_INVALIDATION_CHANNEL, key);
+        } catch (Exception e) {
+            // Pub/Sub发布失败不影响主流程，仅记录日志
+        }
+    }
+
+    /**
      * 获取带随机因子的过期时间
      */
     private long getRandomExpireTime() {
         Random random = new Random();
         long randomOffset = random.nextInt((int) RANDOM_EXPIRE_RANGE);
         return DEFAULT_EXPIRE_MINUTES + randomOffset;
+    }
+
+    /**
+     * 修复：Spring容器销毁时优雅关闭线程池，防止资源泄漏
+     */
+    @Override
+    public void destroy() {
+        delayedDeleteExecutor.shutdown();
+        try {
+            if (!delayedDeleteExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                delayedDeleteExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            delayedDeleteExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
