@@ -757,31 +757,38 @@ docker-compose logs backend
 2. **降低Redis压力**：热点数据在本地缓存，减少Redis访问
 3. **高可用**：L1失效时自动降级到L2，L2失效时降级到数据库
 4. **自动淘汰**：Caffeine基于W-TinyLFU算法，自动淘汰冷数据
-5. **多实例一致性**：通过Redis Pub/Sub通知其他实例清除L1缓存
+5. **多实例一致性**：通过Kafka通知其他实例清除L1缓存
 
-#### 5.4.8 L1缓存跨实例一致性（Redis Pub/Sub）
+#### 5.4.8 L1缓存跨实例一致性（Kafka）
 
 **问题**：Caffeine是JVM进程内缓存，实例A更新数据后无法清除实例B的L1缓存，导致其他实例返回旧数据。
 
-**解决方案**：通过Redis Pub/Sub发布缓存失效消息，各实例订阅后清除本地L1缓存。
+**解决方案**：通过Kafka发布缓存失效消息，各实例消费后清除本地L1缓存。
+
+**为什么选择Kafka而非Redis Pub/Sub**：
+- **消息持久化**：Kafka将消息持久化到磁盘，消费者离线时消息不丢失
+- **可靠性保证**：消费者组管理、offset自动提交、重试机制内置支持
+- **复用基础设施**：项目已有Kafka集群（订单→库存异步解耦），零额外部署成本
+- **监控能力**：支持JMX/Kafka Manager监控，便于排查缓存一致性问题
 
 **流程**：
 ```
 实例A更新商品：
   1. 删除本地L1 + Redis L2
-  2. 发布失效消息到Redis Pub/Sub频道 "cache:invalidation:product"
+  2. 发送失效消息到Kafka Topic "tomatomall.cache.invalidation"
   3. 更新数据库
-  4. 延迟1秒后再次删除 + 再次发布失效消息
+  4. 延迟1秒后再次删除 + 再次发送失效消息
 
 实例B收到消息：
-  → 监听器接收商品ID → 清除本地L1 Caffeine缓存
+  → @KafkaListener接收商品ID → 清除本地L1 Caffeine缓存
   → 下次查询时从Redis L2获取最新数据并回写L1
 ```
 
 **组件**：
-- `CacheInvalidationListener`：订阅Redis Pub/Sub频道，收到消息后清除本地Caffeine缓存
-- `RedisMessageListenerContainer`：Spring提供的Redis消息监听容器
-- 频道名称：`cache:invalidation:product`
+- `CacheInvalidationListener`：使用`@KafkaListener`订阅Topic，收到消息后清除本地Caffeine缓存
+- `KafkaTemplate<String, String>`：发送缓存失效消息到指定Topic
+- Topic名称：`tomatomall.cache.invalidation`
+- 消费者组：`cache-invalidation-group`（多实例各自独立消费）
 
 #### 5.4.9 线程池资源管理
 

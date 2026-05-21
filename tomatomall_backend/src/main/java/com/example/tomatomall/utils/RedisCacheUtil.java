@@ -7,6 +7,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.Random;
@@ -29,14 +30,17 @@ public class RedisCacheUtil implements DisposableBean {
     @Autowired
     private Cache<String, String> productLocalCache;
 
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
     // 商品缓存前缀
     private static final String PRODUCT_CACHE_PREFIX = "product:";
 
     // 互斥锁前缀
     private static final String LOCK_PREFIX = "lock:product:";
 
-    // 缓存失效通知频道名称
-    private static final String CACHE_INVALIDATION_CHANNEL = "cache:invalidation:product";
+    // 缓存失效通知Topic名称
+    private static final String CACHE_INVALIDATION_TOPIC = CacheInvalidationListener.TOPIC_NAME;
 
     // 默认缓存过期时间（分钟）
     private static final long DEFAULT_EXPIRE_MINUTES = 30;
@@ -254,9 +258,9 @@ public class RedisCacheUtil implements DisposableBean {
      */
     private void publishInvalidation(String key) {
         try {
-            redisTemplate.convertAndSend(CACHE_INVALIDATION_CHANNEL, key);
+            kafkaTemplate.send(CACHE_INVALIDATION_TOPIC, key);
         } catch (Exception e) {
-            // Pub/Sub发布失败不影响主流程，仅记录日志
+            // Kafka发送失败不影响主流程，仅记录日志
         }
     }
 
