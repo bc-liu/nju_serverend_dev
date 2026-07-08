@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.time.LocalDateTime;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CartServiceImpl implements CartService {
@@ -41,6 +42,7 @@ public class CartServiceImpl implements CartService {
     @Autowired
     private CartsOrdersRelationRepository cartsOrdersRelationRepository;
 
+    
     @Autowired(required = false)
     private KafkaTemplate<String, String> kafkaTemplate;
 
@@ -92,6 +94,7 @@ public class CartServiceImpl implements CartService {
         return wholeCart;
     }
 
+    @Transactional
     public OrdersVO checkout(List<Integer> cartItemId, String shoppingAddress, String paymentMethod) {
         if (cartItemId == null || cartItemId.isEmpty()) {
             throw new RuntimeException("购物车商品列表为空");
@@ -116,13 +119,15 @@ public class CartServiceImpl implements CartService {
                 throw TomatoMallException.cartItemNotFound();
             }
 
+            // 原子扣减库存：WHERE amount >= quantity 保证不超卖，数据库行锁保证原子性
             Stockpile stockpile = item.getStockpile();
-            if (stockpile.getAmount() < cart.getQuantity()) {
+            int updatedRows = stockpileRepository.decreaseStock(
+                    stockpile.getId(),
+                    cart.getQuantity());
+
+            if (updatedRows == 0) {
                 throw TomatoMallException.insufficientStock();
             }
-            stockpile.setAmount(stockpile.getAmount() - cart.getQuantity());
-            stockpile.setFrozen(stockpile.getFrozen() + cart.getQuantity());
-            stockpileRepository.save(stockpile);
             totalAmount = totalAmount.add(item.getPrice().multiply(new BigDecimal(cart.getQuantity())));
 
             CartsOrdersRelation cartsOrdersRelation = new CartsOrdersRelation();

@@ -56,6 +56,7 @@ public class Product {
     private Stockpile stockpile;
 
 
+
     /**
      *
      * @return 返回值中的vo不包括库存表

@@ -6,17 +6,19 @@ TomatoMall 是一个基于 Spring Boot + Vue 的电商系统，包含完整的�
 
 ### 1.1 技术栈
 
-| 分类 | 技术 | 版本 | 说明 |
-|------|------|------|------|
-| 后端 | Spring Boot | 2.7.6 | 基础框架 |
-| 后端 | Spring Data JPA | - | 数据访问 |
-| 后端 | Spring Security | - | 安全框架 |
-| 后端 | Redis | 7.0 | 缓存和令牌存储 |
-| 后端 | Kafka | 3.9.1 | 消息队列 |
-| 后端 | MySQL | 8.0 | 数据库 |
-| 前端 | Vue 3 | 3.5.13 | 前端框架 |
-| 前端 | Element Plus | 2.9.7 | UI组件库 |
-| 前端 | Axios | 1.8.4 | HTTP客户端 |
+| 分类 | 技术            | 版本   | 说明                                                             |
+| ---- | --------------- | ------ | ---------------------------------------------------------------- |
+| 后端 | Spring Boot     | 2.7.6  | 基础框架                                                         |
+| 后端 | Spring Data JPA | -      | 数据访问                                                         |
+| 后端 | Spring Security | -      | 安全框架                                                         |
+| 后端 | Redis           | 7.0    | **缓存和令牌存储**（商品数据缓存、布隆过滤器、Redisson分布式锁） |
+| 后端 | Redisson        | 3.23.4 | 分布式锁框架                                                     |
+| 后端 | Caffeine        | 2.9.3  | L1本地缓存                                                       |
+| 后端 | Kafka           | 3.9.1  | 消息队列                                                         |
+| 后端 | MySQL           | 8.0    | 数据库                                                           |
+| 前端 | Vue 3           | 3.5.13 | 前端框架                                                         |
+| 前端 | Element Plus    | 2.9.7  | UI组件库                                                         |
+| 前端 | Axios           | 1.8.4  | HTTP客户端                                                       |
 
 ## 2. 部署说明
 
@@ -100,15 +102,15 @@ docker-compose logs backend
 
 后端服务的环境变量配置位于 `docker-compose.yml` 文件中：
 
-| 环境变量 | 说明 | 默认值 |
-|---------|------|-------|
-| SPRING_DATASOURCE_URL | 数据库连接地址 | jdbc:mysql://mysql:3306/tomatomall?characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true |
-| SPRING_DATASOURCE_USERNAME | 数据库用户名 | root |
-| SPRING_DATASOURCE_PASSWORD | 数据库密码 | 123456 |
-| SPRING_REDIS_HOST | Redis主机 | redis |
-| SPRING_REDIS_PORT | Redis端口 | 6379 |
-| SPRING_KAFKA_BOOTSTRAP_SERVERS | Kafka地址 | kafka:9092 |
-| SPRING_KAFKA_CONSUMER_GROUP_ID | Kafka消费者组ID | tomatomall-group |
+| 环境变量                       | 说明            | 默认值                                                                                                                            |
+| ------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| SPRING_DATASOURCE_URL          | 数据库连接地址  | jdbc:mysql://mysql:3306/tomatomall?characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true |
+| SPRING_DATASOURCE_USERNAME     | 数据库用户名    | root                                                                                                                              |
+| SPRING_DATASOURCE_PASSWORD     | 数据库密码      | 123456                                                                                                                            |
+| SPRING_REDIS_HOST              | Redis主机       | redis                                                                                                                             |
+| SPRING_REDIS_PORT              | Redis端口       | 6379                                                                                                                              |
+| SPRING_KAFKA_BOOTSTRAP_SERVERS | Kafka地址       | kafka:9092                                                                                                                        |
+| SPRING_KAFKA_CONSUMER_GROUP_ID | Kafka消费者组ID | tomatomall-group                                                                                                                  |
 
 ## 3. 核心功能说明
 
@@ -122,8 +124,8 @@ docker-compose logs backend
 ### 3.2 商品管理
 
 - 商品列表查询
-- 商品详情查看
-- 商品添加、修改、删除
+- 商品详情查看（**Redis缓存优化**）
+- 商品添加、修改、删除（**延迟双删策略**）
 - 库存管理
 
 ### 3.3 购物车
@@ -669,6 +671,136 @@ docker-compose logs backend
 3. **认证流程**：用户登录 → 生成JWT令牌 → 存储到Redis → 后续请求携带令牌 → 验证令牌 → 授权访问
 4. **消息流程**：订单创建 → 发送Kafka消息 → 消费者处理消息 → 更新库存
 
+### 5.4 Redis缓存优化架构
+
+#### 5.4.1 商品数据缓存策略
+
+- **多级缓存架构**：L1 Caffeine本地缓存 + L2 Redis分布式缓存
+- **缓存键**：`product:{id}`
+- **L1缓存时间**：写入后10分钟过期，访问后5分钟过期
+- **L2缓存时间**：30-40分钟随机过期时间
+- **缓存空值**：防止缓存穿透，缓存不存在的商品ID
+- **L2回写L1**：Redis命中后自动回写Caffeine，提升后续查询速度
+
+#### 5.4.2 防缓存击穿（Cache Breakdown）
+
+- **Redisson分布式锁**：使用Redisson的RLock实现高性能分布式锁
+- **超时与快速失败**：锁等待超时500ms，超时后快速失败返回null，避免线程长时间阻塞
+- **锁持有时间**：锁自动释放时间10秒，防止死锁
+- **双重检查**：获取锁后再次检查缓存，防止重复加载
+- **Pub/Sub机制**：Redisson内部基于Pub/Sub实现高效唤醒，不再盲目sleep
+- **自动管理**：Redisson自动管理锁释放，确保锁一定会被释放
+
+#### 5.4.3 防缓存穿透（Cache Penetration）
+
+- **布隆过滤器**：使用Redis BitMap实现，过滤不存在的商品ID
+- **空值缓存**：缓存查询结果为空的请求，设置较短过期时间
+
+#### 5.4.4 延迟双删策略（Delayed Double Delete）
+
+- **第一次删除**：在数据库更新前删除L1和L2缓存
+- **数据库更新**：执行实际的数据库操作
+- **第二次删除**：延迟1秒后再次删除L1和L2缓存，确保数据一致性
+
+#### 5.4.5 缓存一致性保证
+
+- **写操作同步**：所有商品创建、更新、删除操作同步更新L1和L2缓存
+- **布隆过滤器维护**：新增商品时自动更新布隆过滤器
+- **初始化加载**：系统启动时自动初始化布隆过滤器
+- **L1/L2同步删除**：缓存失效时同时清除Caffeine和Redis
+
+#### 5.4.6 Redisson分布式锁优化
+
+**优化思路**：
+- 引入Redisson的RLock，移除本地锁，完全信任分布式锁的互斥性
+- 使用`RLock.tryLock(waitTime, leaseTime, unit)`指定最大等待时间和锁持有时间
+- 设置合理的等待超时（500ms），超时后快速失败，避免线程长时间阻塞
+
+**技术优势**：
+1. **高性能**：Redisson内部基于Pub/Sub机制实现高效唤醒，减少CPU空转
+2. **可靠性**：锁自动续期（Watchdog机制），防止业务执行时间过长导致锁提前释放
+3. **易用性**：API简洁，自动管理锁释放，无需手动删除锁键
+4. **可扩展**：支持集群模式、哨兵模式等多种Redis部署方式
+
+**配置参数**：
+- 锁等待超时：500ms
+- 锁持有时间：10秒
+- 锁前缀：`lock:product:`
+
+#### 5.4.7 多级缓存架构（L1 Caffeine + L2 Redis）
+
+**架构设计**：
+```
+请求 → L1 Caffeine本地缓存 → L2 Redis分布式缓存 → 数据库
+         (纳秒级)              (毫秒级)            (百毫秒级)
+```
+
+**读取流程**：
+1. 先查L1 Caffeine本地缓存，命中直接返回（纳秒级响应）
+2. L1未命中，查L2 Redis缓存，命中后回写L1并返回
+3. L1和L2都未命中，获取分布式锁查询数据库，结果同时写入L1和L2
+
+**写入流程**：
+- 设置缓存：同时写入L1和L2
+- 删除缓存：同时清除L1和L2
+- 延迟双删：两次删除都同时操作L1和L2
+
+**Caffeine配置参数**：
+- 初始容量：100
+- 最大容量：1000
+- 写入后过期：10分钟
+- 访问后过期：5分钟
+- 开启统计：recordStats()
+
+**技术优势**：
+1. **极致性能**：L1本地缓存命中时纳秒级响应，无网络开销
+2. **降低Redis压力**：热点数据在本地缓存，减少Redis访问
+3. **高可用**：L1失效时自动降级到L2，L2失效时降级到数据库
+4. **自动淘汰**：Caffeine基于W-TinyLFU算法，自动淘汰冷数据
+5. **多实例一致性**：通过Kafka通知其他实例清除L1缓存
+
+#### 5.4.8 L1缓存跨实例一致性（Kafka）
+
+**问题**：Caffeine是JVM进程内缓存，实例A更新数据后无法清除实例B的L1缓存，导致其他实例返回旧数据。
+
+**解决方案**：通过Kafka发布缓存失效消息，各实例消费后清除本地L1缓存。
+
+**为什么选择Kafka而非Redis Pub/Sub**：
+- **消息持久化**：Kafka将消息持久化到磁盘，消费者离线时消息不丢失
+- **可靠性保证**：消费者组管理、offset自动提交、重试机制内置支持
+- **复用基础设施**：项目已有Kafka集群（订单→库存异步解耦），零额外部署成本
+- **监控能力**：支持JMX/Kafka Manager监控，便于排查缓存一致性问题
+
+**流程**：
+```
+实例A更新商品：
+  1. 删除本地L1 + Redis L2
+  2. 发送失效消息到Kafka Topic "tomatomall.cache.invalidation"
+  3. 更新数据库
+  4. 延迟1秒后再次删除 + 再次发送失效消息
+
+实例B收到消息：
+  → @KafkaListener接收商品ID → 清除本地L1 Caffeine缓存
+  → 下次查询时从Redis L2获取最新数据并回写L1
+```
+
+**组件**：
+- `CacheInvalidationListener`：使用`@KafkaListener`订阅Topic，收到消息后清除本地Caffeine缓存
+- `KafkaTemplate<String, String>`：发送缓存失效消息到指定Topic
+- Topic名称：`tomatomall.cache.invalidation`
+- 消费者组：`cache-invalidation-group`（多实例各自独立消费）
+
+#### 5.4.9 线程池资源管理
+
+**问题**：`ScheduledExecutorService`直接创建未交给Spring容器管理，应用关闭时线程池不会优雅关闭，造成资源泄漏。
+
+**解决方案**：`RedisCacheUtil`实现`DisposableBean`接口，在`destroy()`中优雅关闭线程池。
+
+**关闭流程**：
+1. 调用`shutdown()`停止接受新任务
+2. 等待5秒让已提交任务完成
+3. 超时后调用`shutdownNow()`强制中断
+
 ## 6. 安全说明
 
 ### 6.1 认证与授权
@@ -836,8 +968,8 @@ docker-compose logs backend
 
 ## 10. 版本历史
 
-| 版本 | 日期 | 变更内容 |
-|------|------|----------|
+| 版本   | 日期       | 变更内容 |
+| ------ | ---------- | -------- |
 | v1.0.0 | 2026-01-23 | 初始版本 |
 
 ## 11. 联系与支持

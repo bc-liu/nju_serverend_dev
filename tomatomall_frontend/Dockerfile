@@ -3,6 +3,7 @@ FROM node:16-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
+RUN npm config set registry https://registry.npmmirror.com
 RUN npm install
 
 COPY . .

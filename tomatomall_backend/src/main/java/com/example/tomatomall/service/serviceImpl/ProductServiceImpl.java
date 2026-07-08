@@ -4,12 +4,13 @@ import com.example.tomatomall.Repository.*;
 import com.example.tomatomall.exception.TomatoMallException;
 import com.example.tomatomall.po.*;
 import com.example.tomatomall.service.ProductService;
-import com.example.tomatomall.utils.SecurityUtil;
+import com.example.tomatomall.utils.*;
 import com.example.tomatomall.vo.ProductVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,17 +34,46 @@ public class ProductServiceImpl implements ProductService {
     @Autowired
     private CartRepository cartRepository;
 
+    @Autowired
+    private RedisCacheUtil redisCacheUtil;
+
+    @Autowired
+    private BloomFilterUtil bloomFilterUtil;
+
+    @PostConstruct
+    public void init() {
+        // 初始化布隆过滤器，添加所有存在的商品ID
+        List<Product> allProducts = productRepository.findAll();
+        List<Integer> productIds = allProducts.stream()
+                .map(Product::getId)
+                .collect(Collectors.toList());
+        bloomFilterUtil.initBloomFilter(productIds);
+    }
+
     @Override
     public ProductVO createProduct(ProductVO productVO) {
         Product product = productVO.toPO();
         Product retProduct = productRepository.save(product);
-        return retProduct.toVO();
+        ProductVO result = retProduct.toVO();
+
+        // 更新布隆过滤器
+        bloomFilterUtil.add(String.valueOf(result.getId()));
+
+        // 设置缓存
+        redisCacheUtil.setProductCache(String.valueOf(result.getId()), result);
+
+        return result;
     }
 
     @Override
     public ProductVO getProductById(Integer id) {
-        Product product = productRepository.findById(id).orElseThrow(TomatoMallException::productNotFound);
-        return product.toVO();
+        String key = String.valueOf(id);
+
+        // 使用Redis缓存工具获取商品数据，包含防击穿和防穿透逻辑
+        return redisCacheUtil.getProductCache(key, ProductVO.class, () -> {
+            Product product = productRepository.findById(id).orElseThrow(TomatoMallException::productNotFound);
+            return product.toVO();
+        }, bloomFilterUtil);
     }
 
     @Override
@@ -60,7 +90,7 @@ public class ProductServiceImpl implements ProductService {
     public String updateProduct(ProductVO updatedProduct) {
         Integer id = updatedProduct.getId();
 
-        if(id == null) {
+        if (id == null) {
             throw TomatoMallException.productNotFound();
         }
 
@@ -68,7 +98,7 @@ public class ProductServiceImpl implements ProductService {
 
         updateProductBasicInfo(productInRepository, updatedProduct);
 
-        if(updatedProduct.getSpecifications() != null) {
+        if (updatedProduct.getSpecifications() != null) {
             List<ProductVO.SpecificationVO> specificationVOs = updatedProduct.getSpecifications();
 
             List<Specifications> specifications = productInRepository.getSpecifications();
@@ -76,45 +106,25 @@ public class ProductServiceImpl implements ProductService {
             Map<Integer, Specifications> specificationsMap = specifications.stream()
                     .collect(Collectors.toMap(Specifications::getId, spec -> spec));
 
-            for(ProductVO.SpecificationVO specificationVO : specificationVOs) {
+            for (ProductVO.SpecificationVO specificationVO : specificationVOs) {
                 int specificationId = specificationVO.getId();
-                if(specificationsMap.containsKey(specificationId)) {//更改
+                if (specificationsMap.containsKey(specificationId)) {// 更改
                     Specifications existingSpec = specificationsMap.get(specificationId);
                     existingSpec.setItem(specificationVO.getItem());
                     existingSpec.setValue(specificationVO.getValue());
-                }else{//新增
+                } else {// 新增
                     specifications.add(specificationVO.toPO());
                 }
             }
             productInRepository.setSpecifications(specifications);
         }
 
-        productRepository.save(productInRepository);
+        // 使用延迟双删策略更新商品
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            productRepository.save(productInRepository);
+        });
 
-//        if(updatedProduct.getId() != null) {
-//            productInRepository.setId(updatedProduct.getId());
-//        }
-//
-//        if(updatedProduct.getRate() != null) {
-//            productInRepository.setId(updatedProduct.getId());
-//        }
-
-//        productInRepository.setTitle(updatedProduct.getTitle());
-//        productInRepository.setPrice(updatedProduct.getPrice());
-//        productInRepository.setRate(updatedProduct.getRate());
-//        productInRepository.setDescription(updatedProduct.getDescription());
-//        productInRepository.setCover(updatedProduct.getCover());
-//        productInRepository.setDetail(updatedProduct.getDetail());
-//        if (productInRepository.getSpecifications() != null) {
-//            productInRepository.setSpecifications(updatedProduct.getSpecifications());
-//        }
-//        if (productInRepository.getStockpile() != null) {
-//            productInRepository.setStockpile(updatedProduct.getStockpile());
-//        }
-//        productRepository.save(productInRepository);
         return "更新成功";
-//    else throw new RuntimeException("product not found, id:"+id);
-    //return null;
     }
 
     private void updateProductBasicInfo(Product product, ProductVO productVO) {
@@ -136,19 +146,22 @@ public class ProductServiceImpl implements ProductService {
         if (productVO.getDetail() != null) {
             product.setDetail(productVO.getDetail());
         }
-        if(productVO.getId() != null) {
+        if (productVO.getId() != null) {
             product.setId(productVO.getId());
         }
 
     }
 
-
     @Override
     public void deleteProduct(Integer id) {
-        if(!productRepository.existsById(id)) {
+        if (!productRepository.existsById(id)) {
             throw TomatoMallException.productNotFound();
         }
-        productRepository.deleteById(id);
+
+        // 使用延迟双删策略删除商品
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            productRepository.deleteById(id);
+        });
     }
 
     /**
@@ -159,35 +172,42 @@ public class ProductServiceImpl implements ProductService {
     public void adjustStockPile(Integer id, Integer amount) {
         Product product = productRepository.findById(id).orElseThrow(TomatoMallException::productNotFound);
         Stockpile stockpile = product.getStockpile();
-        if(stockpile == null) {
-            Stockpile newStockpile = new Stockpile();
-            newStockpile.setProduct(product);
-            newStockpile.setAmount(amount);
-            newStockpile.setFrozen(0);
-//            stockpileRepository.save(newStockpile);
-            product.setStockpile(newStockpile);
-            productRepository.save(product);
-            return;
-        }
-        product.getStockpile().setAmount(amount);
-        productRepository.save(product);
+
+        // 使用延迟双删策略调整库存
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(id), () -> {
+            if (stockpile == null) {
+                Stockpile newStockpile = new Stockpile();
+                newStockpile.setProduct(product);
+                newStockpile.setAmount(amount);
+                newStockpile.setFrozen(0);
+                product.setStockpile(newStockpile);
+                productRepository.save(product);
+            } else {
+                product.getStockpile().setAmount(amount);
+                productRepository.save(product);
+            }
+        });
     }
 
     @Override
-    public ProductVO.StockpileVO getStockPile(Integer productID){
+    public ProductVO.StockpileVO getStockPile(Integer productID) {
         Product product = productRepository.findById(productID).orElseThrow(TomatoMallException::productNotFound);
 
-        if(product.getStockpile() == null) {
+        if (product.getStockpile() == null) {
             return null;
         }
         return product.getStockpile().toStockpileVO();
     }
 
-    public void addStockPile(ProductVO.StockpileVO stockpileVO){
+    public void addStockPile(ProductVO.StockpileVO stockpileVO) {
         int productID = stockpileVO.getProductId();
         Product product = productRepository.findById(productID).orElseThrow(TomatoMallException::productNotFound);
-        product.setStockpile(stockpileVO.toPO());
-        productRepository.save(product);
+
+        // 使用延迟双删策略添加库存
+        redisCacheUtil.delayedDoubleDelete(String.valueOf(productID), () -> {
+            product.setStockpile(stockpileVO.toPO());
+            productRepository.save(product);
+        });
     }
 
     @Override
@@ -197,13 +217,14 @@ public class ProductServiceImpl implements ProductService {
 
         List<Orders> orders = ordersRepository.findByUserId(userId);
 
-        List<Integer> orderIds = new ArrayList<>() ;
+        List<Integer> orderIds = new ArrayList<>();
         for (Orders order : orders) {
-            if(!order.getStatus().equals("SUCCESS")) continue;
+            if (!order.getStatus().equals("SUCCESS"))
+                continue;
             orderIds.add(order.getOrderId());
         }
 
-        List<Cart> cartItems = new ArrayList<>() ;
+        List<Cart> cartItems = new ArrayList<>();
         for (Integer orderId : orderIds) {
             List<CartsOrdersRelation> relations = cartsOrdersRelationRepository.findByOrdersOrderId(orderId);
             for (CartsOrdersRelation relation : relations) {
@@ -217,14 +238,13 @@ public class ProductServiceImpl implements ProductService {
 
         for (Cart cartItem : cartItems) {
             Product product = cartItem.getProduct();
-            if(!idList.contains(product.getId())) {
+            if (!idList.contains(product.getId())) {
                 productVOList.add(product.toVO());
                 idList.add(product.getId());
             }
         }
 
         return productVOList;
-
 
     }
 
