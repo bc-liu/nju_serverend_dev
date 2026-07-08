@@ -42,6 +42,7 @@ public class CartServiceImpl implements CartService {
     @Autowired
     private CartsOrdersRelationRepository cartsOrdersRelationRepository;
 
+    
     @Autowired(required = false)
     private KafkaTemplate<String, String> kafkaTemplate;
 
