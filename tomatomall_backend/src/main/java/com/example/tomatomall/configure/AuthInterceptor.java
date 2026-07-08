@@ -24,7 +24,18 @@ public class AuthInterceptor implements HandlerInterceptor {
 
 //        System.out.println(uri + " " + method);
 
+        // 允许注册接口
         if ("/api/accounts".equals(uri) && "POST".equalsIgnoreCase(method)) {
+            return true;
+        }
+
+        // 允许登录接口
+        if ("/api/accounts/login".equals(uri) && "POST".equalsIgnoreCase(method)) {
+            return true;
+        }
+
+        // 允许商品相关接口公开访问（用于性能测试）
+        if (uri.startsWith("/api/products") && "GET".equalsIgnoreCase(method)) {
             return true;
         }
 

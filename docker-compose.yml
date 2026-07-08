@@ -1,9 +1,8 @@
 version: "3.8"
 
 services:
-  # MySQL数据库服务
   mysql:
-    image: mysql:8.0
+    image: docker.1ms.run/library/mysql:8.0
     container_name: mysql
     ports:
       - "3306:3306"
@@ -16,9 +15,8 @@ services:
       - mysql_data:/var/lib/mysql
     restart: unless-stopped
 
-  # Redis服务
   redis:
-    image: redis:7.0
+    image: docker.1ms.run/library/redis:7.0-alpine
     container_name: redis
     ports:
       - "6379:6379"
@@ -26,9 +24,8 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
-  # Kafka服务
   kafka:
-    image: apache/kafka:3.9.1
+    image: apache/kafka:latest
     container_name: kafka
     ports:
       - "9092:9092"
@@ -38,7 +35,7 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
 
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
 
@@ -47,38 +44,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
     volumes:
       - kafka_data:/var/lib/kafka/data
-    restart: unless-stopped
-
-  # 后端服务
-  backend:
-    build:
-      context: ./tomatomall_backend
-    container_name: backend
-    ports:
-      - "8080:8080"
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/tomatomall?characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: 123456
-      SPRING_REDIS_HOST: redis
-      SPRING_REDIS_PORT: 6379
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_KAFKA_CONSUMER_GROUP_ID: tomatomall-group
-    depends_on:
-      - mysql
-      - redis
-      - kafka
-    restart: unless-stopped
-
-  # 前端服务
-  frontend:
-    build:
-      context: ./tomatomall_frontend
-    container_name: frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
     restart: unless-stopped
 
 volumes:

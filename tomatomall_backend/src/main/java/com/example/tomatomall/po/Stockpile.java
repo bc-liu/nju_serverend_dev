@@ -25,6 +25,10 @@ public class Stockpile {
     @Column(name = "frozen", nullable = false)
     private Integer frozen;
 
+    @Version
+    @Column(name = "version")
+    private Integer version;
+
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false, unique = true)
     @JsonBackReference // ✅ 解决无限递归
