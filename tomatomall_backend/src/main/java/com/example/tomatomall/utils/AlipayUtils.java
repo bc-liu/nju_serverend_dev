@@ -56,6 +56,9 @@ public class AlipayUtils {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired(required = false)
+    private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+
     public PayResponse pay(Integer orderId) {
         Orders orders = ordersRepository.findById(orderId).orElseThrow(TomatoMallException::orderNotFound);
 
@@ -72,11 +75,11 @@ public class AlipayUtils {
 
         long diff = currentTime - createTime;
 
-        //// 判断是否超过 30 分钟（30 * 60 * 1000 = 1,800,000 毫秒）
-        // if (diff > 30 * 60 * 1000L) {
-        // ordersRepository.deleteById(orderId);
-        // return null;
-        // }
+        // 判断是否超过 30 分钟（30 * 60 * 1000 = 1,800,000 毫秒）
+        if (diff > 30 * 60 * 1000L) {
+            ordersRepository.deleteById(orderId);
+            return null;
+        }
 
         AliPay aliPay = new AliPay();
         aliPay.setTraceNo(String.valueOf(orderId));
@@ -133,7 +136,13 @@ public class AlipayUtils {
             }
             String sign = params.get("sign");
             String content = AlipaySignature.getSignCheckContentV1(params);
-            boolean checkSignature = AlipaySignature.rsa256CheckContent(content, sign, alipayPublicKey, "UTF-8"); // 验证签名
+            boolean checkSignature = false;
+            String verifyError = null;
+            try {
+                checkSignature = AlipaySignature.rsa256CheckContent(content, sign, alipayPublicKey, "UTF-8"); // 验证签名
+            } catch (Exception ex) {
+                verifyError = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+            }
             // 支付宝验签
             if (checkSignature) {
                 // 验签通过 可做自己需要的操作
@@ -151,6 +160,26 @@ public class AlipayUtils {
                 ordersService.updateOrderSuccess(orderId);
 
                 CompletableFuture.runAsync(() -> publishOrderPaidEvent(orderId, params));
+            } else {
+                // 验签失败：记录非法回调拦截
+                System.out.println("=========非法回调拦截（验签失败）========");
+                System.out.println("商户订单号: " + params.get("out_trade_no"));
+                System.out.println("来源IP: " + request.getRemoteAddr());
+                if (verifyError != null) {
+                    System.out.println("验签异常: " + verifyError);
+                } else {
+                    System.out.println("签名不匹配");
+                }
+                // Redis计数：统计非法回调拦截次数
+                if (redisTemplate != null) {
+                    try {
+                        redisTemplate.opsForValue().increment("security:illegalCallback:count");
+                        redisTemplate.opsForValue().increment(
+                                "security:illegalCallback:ip:" + request.getRemoteAddr());
+                    } catch (Exception rex) {
+                        System.out.println("Redis计数异常: " + rex.getMessage());
+                    }
+                }
             }
         }
         return "success";

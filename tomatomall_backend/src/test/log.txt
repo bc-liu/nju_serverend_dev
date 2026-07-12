@@ -1,0 +1,62 @@
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev\tomatomall_backend\src\test> python oversell_test.py
+并发数: 100
+成功下单: 10
+失败(含库存不足): 90
+总耗时: 0.78s
+QPS: 128.2
+错误样本: ['checkout: {"code":"409","msg":"商品库存不足","data":null}', 'checkout: {"code":"409","msg":"商品库存不足","data":null}', 'checkout: {"code":"409","msg":"商品库存 不足","data":null}']
+
+mysql> SELECT amount, frozen, (amount + frozen) AS total FROM stockpiles WHERE product_id = 2;
++--------+--------+-------+
+| amount | frozen | total |
++--------+--------+-------+
+|      0 |     10 |    10 |
++--------+--------+-------+
+1 row in set (0.00 sec)
+
+mysql> SELECT COUNT(*) FROM orders WHERE status = 'PENDING';
++----------+
+| COUNT(*) |
++----------+
+|       10 |
++----------+
+1 row in set (0.00 sec)
+
+post /api/cart吞吐量 161/sec
+post /api/cart/checkout吞吐量 173/sec
+
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev\tomatomall_backend\src\test> python cache_perf_test.py
+=== 第1次请求（冷启动，穿透到DB）===
+  耗时: 86.3 ms
+=== 接下来 50 次（应命中 L1 Caffeine）===
+  平均: 22.0 ms
+  中位数: 23.8 ms
+  P95: 31.9 ms
+
+>>> 请重启后端服务（清空 Caffeine，保留 Redis），然后运行 cache_perf_l2.py <<<
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev\tomatomall_backend\src\test> python cache_perf_l2.py
+第1次(L2命中): 156.7 ms
+L1命中 平均: 22.8 ms
+L1命中 P95: 34.7 ms
+
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev\tomatomall_backend> $current = (Get-Content app.log).Count
+>> $lines = Get-Content app.log | Select-Object -Skip $baseline
+>> $selectCount = ($lines | Select-String -Pattern "select" -CaseSensitive:$false).Count
+>> Write-Host "场景一(清缓存后100次请求) select 次数: $selectCount"       
+场景一(清缓存后100次请求) select 次数: 0
+
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev\tomatomall_backend> $baseline2 = (Get-Content app.log).Count
+>> python -c "import requests; [requests.get('http://localhost:8080/api/products/1') for _ in range(100)]"
+>> $lines2 = Get-Content app.log | Select-Object -Skip $baseline2
+>> $selectCount2 = ($lines2 | Select-String -Pattern "select" -CaseSensitive:$false).Count
+>> Write-Host "场景二(有缓存100次请求) select 次数: $selectCount2"        
+场景二(有缓存100次请求) select 次数: 0
+
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev> docker exec redis redis-cli DEL product:1
+0
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev> python -c "import requests; [requests.get('http://localhost:8080/api/products/1') for _ in range(100)]"
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev> docker exec redis redis-cli EXISTS product:1
+0
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev> python -c "import requests; [requests.get('http://localhost:8080/api/products/1') for _ in range(100)]"
+(base) PS D:\Develop\软工2\TomatoMall2.0\nju_serverend_dev> docker exec redis redis-cli EXISTS product:1
+0

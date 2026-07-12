@@ -25,7 +25,7 @@ public class Product {
     @Column(name = "id")
     private Integer id;
 
-    @Column(name = "title", nullable = false, length = 50)
+    @Column(name = "title", nullable = false, length = 100)
     private String title;
 
     @Column(name = "price", nullable = false, precision = 10, scale = 2)
@@ -34,13 +34,13 @@ public class Product {
     @Column(name = "rate", nullable = false)
     private Double rate;
 
-    @Column(name = "description", length = 255)
+    @Column(name = "description", length = 10000)
     private String description;
 
     @Column(name = "cover", length = 500)
     private String cover;
 
-    @Column(name = "detail", length = 500)
+    @Column(name = "detail", length = 10000)
     private String detail;
 
     // 一对多关联规格表
