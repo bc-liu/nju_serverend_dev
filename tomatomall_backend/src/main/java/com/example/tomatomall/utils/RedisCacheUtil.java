@@ -65,8 +65,7 @@ public class RedisCacheUtil implements DisposableBean {
             BloomFilterUtil bloomFilter) {
         String cacheKey = PRODUCT_CACHE_PREFIX + key;
 
-        // 1. 先检查布隆过滤器（防穿透）
-        if (bloomFilter != null && !bloomFilter.mightContain(key)) {
+        if (bloomFilter != null) {
             return null;
         }
 
