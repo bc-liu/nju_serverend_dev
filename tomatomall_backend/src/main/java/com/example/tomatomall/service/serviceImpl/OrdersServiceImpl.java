@@ -10,6 +10,7 @@ import com.example.tomatomall.po.Orders;
 import com.example.tomatomall.po.Product;
 import com.example.tomatomall.po.Stockpile;
 import com.example.tomatomall.service.OrdersService;
+import com.example.tomatomall.service.StockRedisService;
 import com.example.tomatomall.utils.SecurityUtil;
 import com.example.tomatomall.vo.OrdersVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,9 @@ public class OrdersServiceImpl implements OrdersService {
     @Autowired
     StockpileRepository stockpileRepository;
 
+    @Autowired
+    StockRedisService stockRedisService;
+
     @Override
     public List<OrdersVO> getPENDINGOrder() {
         Account account = securityUtil.getCurrentUser();
@@ -44,11 +48,11 @@ public class OrdersServiceImpl implements OrdersService {
         List<OrdersVO> pendingOrders = new ArrayList<>();
 
         for (Orders order : orders) {
-            if(order.getStatus().equals("PENDING")) {
+            if (order.getStatus().equals("PENDING")) {
                 pendingOrders.add(order.toVO());
             }
         }
-        return pendingOrders ;
+        return pendingOrders;
     }
 
     @Override
@@ -92,6 +96,8 @@ public class OrdersServiceImpl implements OrdersService {
                 stockpile.setAmount(stockpile.getAmount() + quantity);
                 stockpile.setFrozen(Math.max(stockpile.getFrozen() - quantity, 0));
                 stockpileRepository.save(stockpile);
+                // 同步刷新 Redis 库存, 保证缓存与 DB 一致
+                stockRedisService.refreshStock(product.getId());
             }
             cartsOrdersRelationRepository.deleteAll(relations);
         }

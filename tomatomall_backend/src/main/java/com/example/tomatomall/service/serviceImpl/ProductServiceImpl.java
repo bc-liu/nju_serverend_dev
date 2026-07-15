@@ -1,6 +1,7 @@
 package com.example.tomatomall.service.serviceImpl;
 
 import com.example.tomatomall.Repository.*;
+import com.example.tomatomall.annotation.AutoRefreshStock;
 import com.example.tomatomall.exception.TomatoMallException;
 import com.example.tomatomall.po.*;
 import com.example.tomatomall.service.ProductService;
@@ -153,6 +154,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
+    @AutoRefreshStock(productId = "#id", delete = true)
     public void deleteProduct(Integer id) {
         if (!productRepository.existsById(id)) {
             throw TomatoMallException.productNotFound();
@@ -169,6 +171,7 @@ public class ProductServiceImpl implements ProductService {
      * 疑问：为什么只可以修改amount？这样的话冻结数就不能修改了？
      */
     @Override
+    @AutoRefreshStock(productId = "#id")
     public void adjustStockPile(Integer id, Integer amount) {
         Product product = productRepository.findById(id).orElseThrow(TomatoMallException::productNotFound);
         Stockpile stockpile = product.getStockpile();
@@ -199,6 +202,7 @@ public class ProductServiceImpl implements ProductService {
         return product.getStockpile().toStockpileVO();
     }
 
+    @AutoRefreshStock(productId = "#stockpileVO.productId")
     public void addStockPile(ProductVO.StockpileVO stockpileVO) {
         int productID = stockpileVO.getProductId();
         Product product = productRepository.findById(productID).orElseThrow(TomatoMallException::productNotFound);
