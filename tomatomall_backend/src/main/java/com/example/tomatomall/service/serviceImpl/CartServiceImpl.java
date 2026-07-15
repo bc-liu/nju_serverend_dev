@@ -4,11 +4,14 @@ import com.example.tomatomall.Repository.*;
 import com.example.tomatomall.exception.TomatoMallException;
 import com.example.tomatomall.po.*;
 import com.example.tomatomall.service.CartService;
+import com.example.tomatomall.service.StockRedisService;
 import com.example.tomatomall.utils.SecurityUtil;
 import com.example.tomatomall.vo.CartVO;
 import com.example.tomatomall.vo.OrdersVO;
 import com.example.tomatomall.vo.WholeCart;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -26,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CartServiceImpl implements CartService {
 
+    private static final Logger log = LoggerFactory.getLogger(CartServiceImpl.class);
+
     @Autowired
     private ProductRepository productRepository;
     @Autowired
@@ -42,7 +47,9 @@ public class CartServiceImpl implements CartService {
     @Autowired
     private CartsOrdersRelationRepository cartsOrdersRelationRepository;
 
-    
+    @Autowired
+    private StockRedisService stockRedisService;
+
     @Autowired(required = false)
     private KafkaTemplate<String, String> kafkaTemplate;
 
@@ -108,51 +115,74 @@ public class CartServiceImpl implements CartService {
 
         List<CartsOrdersRelation> cartsOrdersRelations = new ArrayList<>();
 
-        // List<Cart> cartsOfThisAccount = new ArrayList<>();
-        for (Integer itemId : cartItemId) {
-            Cart cart = cartRepository.findById(itemId).orElseThrow(TomatoMallException::cartItemNotFound);
-            // cartsOfThisAccount.add(cart);
-            Product item = productRepository.findById(cart.getProduct().getId())
-                    .orElseThrow(TomatoMallException::productNotFound);
+        // 记录已成功扣减的 Redis 库存, 用于事务失败时回滚
+        List<int[]> redisDeducted = new ArrayList<>();
 
-            if (item == null) {
-                throw TomatoMallException.cartItemNotFound();
+        try {
+            for (Integer itemId : cartItemId) {
+                Cart cart = cartRepository.findById(itemId).orElseThrow(TomatoMallException::cartItemNotFound);
+                Product item = productRepository.findById(cart.getProduct().getId())
+                        .orElseThrow(TomatoMallException::productNotFound);
+
+                if (item == null) {
+                    throw TomatoMallException.cartItemNotFound();
+                }
+
+                Stockpile stockpile = item.getStockpile();
+                Integer productId = item.getId();
+                Integer quantity = cart.getQuantity();
+
+                // 1. Redis + Lua 原子扣减 (主路径, 利用 Redis 单线程避免超卖)
+                boolean redisOk = stockRedisService.deductStock(productId, quantity);
+                if (!redisOk) {
+                    throw TomatoMallException.insufficientStock();
+                }
+                redisDeducted.add(new int[]{productId, quantity});
+
+                // 2. 同步到数据库, 保证 DB 最终一致
+                int updatedRows = stockpileRepository.decreaseStock(stockpile.getId(), quantity);
+                if (updatedRows == 0) {
+                    // 极端情况: Redis 与 DB 不一致, 回滚 Redis 并失败
+                    stockRedisService.restoreStock(productId, quantity);
+                    redisDeducted.remove(redisDeducted.size() - 1);
+                    throw TomatoMallException.insufficientStock();
+                }
+                totalAmount = totalAmount.add(item.getPrice().multiply(new BigDecimal(quantity)));
+
+                CartsOrdersRelation cartsOrdersRelation = new CartsOrdersRelation();
+                cartsOrdersRelation.setCartItem(cart);
+                cartsOrdersRelation.setOrders(orders);
+                cartsOrdersRelations.add(cartsOrdersRelation);
             }
 
-            // 原子扣减库存：WHERE amount >= quantity 保证不超卖，数据库行锁保证原子性
-            Stockpile stockpile = item.getStockpile();
-            int updatedRows = stockpileRepository.decreaseStock(
-                    stockpile.getId(),
-                    cart.getQuantity());
+            orders.setTotalAmount(totalAmount);
+            orders.setUser(currentUser);
+            orders.setUserId(currentUser.getId());
+            orders.setPaymentMethod(paymentMethod);
+            orders.setStatus("PENDING");
+            orders.setCreateTime(new Timestamp(System.currentTimeMillis()).toLocalDateTime());
+            ordersRepository.save(orders);
 
-            if (updatedRows == 0) {
-                throw TomatoMallException.insufficientStock();
+            cartsOrdersRelationRepository.saveAll(cartsOrdersRelations);
+
+            Integer orderId = orders.getOrderId();
+            List<Integer> cartItemIdsSnapshot = new ArrayList<>(cartItemId);
+            CompletableFuture.runAsync(() -> publishOrderCreatedEvent(orderId, currentUser.getId(), orders.getTotalAmount(),
+                    paymentMethod, orders.getStatus(), orders.getCreateTime(), shoppingAddress, cartItemIdsSnapshot));
+
+            return orders.toVO();
+
+        } catch (RuntimeException e) {
+            // 事务失败: DB 会自动回滚, 这里手动回滚所有已扣减的 Redis 库存, 保证缓存与 DB 一致
+            for (int[] d : redisDeducted) {
+                try {
+                    stockRedisService.restoreStock(d[0], d[1]);
+                } catch (Exception ignored) {
+                    log.warn("Redis 库存回滚失败: productId={}, quantity={}", d[0], d[1]);
+                }
             }
-            totalAmount = totalAmount.add(item.getPrice().multiply(new BigDecimal(cart.getQuantity())));
-
-            CartsOrdersRelation cartsOrdersRelation = new CartsOrdersRelation();
-            cartsOrdersRelation.setCartItem(cart);
-            cartsOrdersRelation.setOrders(orders);
-            cartsOrdersRelations.add(cartsOrdersRelation);
+            throw e;
         }
-
-        // Orders orders = new Orders();
-        orders.setTotalAmount(totalAmount);
-        orders.setUser(currentUser);
-        orders.setUserId(currentUser.getId());
-        orders.setPaymentMethod(paymentMethod);
-        orders.setStatus("PENDING");
-        orders.setCreateTime(new Timestamp(System.currentTimeMillis()).toLocalDateTime());
-        ordersRepository.save(orders);
-
-        cartsOrdersRelationRepository.saveAll(cartsOrdersRelations);
-
-        Integer orderId = orders.getOrderId();
-        List<Integer> cartItemIdsSnapshot = new ArrayList<>(cartItemId);
-        CompletableFuture.runAsync(() -> publishOrderCreatedEvent(orderId, currentUser.getId(), orders.getTotalAmount(),
-                paymentMethod, orders.getStatus(), orders.getCreateTime(), shoppingAddress, cartItemIdsSnapshot));
-
-        return orders.toVO();
     }
 
     private void publishOrderCreatedEvent(Integer orderId, Integer userId, BigDecimal totalAmount, String paymentMethod,
