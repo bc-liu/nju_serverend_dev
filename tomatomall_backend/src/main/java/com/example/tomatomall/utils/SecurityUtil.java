@@ -1,6 +1,7 @@
 package com.example.tomatomall.utils;
 
 
+import com.example.tomatomall.Repository.AccountRepository;
 import com.example.tomatomall.po.Account;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -18,8 +19,15 @@ public class SecurityUtil {
     @Autowired
     HttpServletRequest httpServletRequest;
 
+    @Autowired
+    AccountRepository accountRepository;
+
     public Account getCurrentUser(){
-        return (Account) httpServletRequest.getSession().getAttribute("currentUser");
+        Integer userId = (Integer) httpServletRequest.getSession().getAttribute("currentUserId");
+        if (userId == null) {
+            return null;
+        }
+        return accountRepository.findById(userId).orElse(null);
     }
 }
 

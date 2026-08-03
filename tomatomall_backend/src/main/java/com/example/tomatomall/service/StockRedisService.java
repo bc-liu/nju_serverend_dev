@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.PostConstruct;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnel;
 
@@ -48,6 +49,9 @@ public class StockRedisService {
 
     /** Lua 脚本返回值: Redis 中未初始化库存 */
     private static final long RESULT_NOT_INITIALIZED = -1L;
+
+    /** 库存 Key 默认 TTL（7 天），作为兜底防止被删商品残留 Redis Key */
+    private static final long STOCK_KEY_TTL_DAYS = 7;
 
     @Autowired
     private StringRedisTemplate redisTemplate;
@@ -97,7 +101,9 @@ public class StockRedisService {
                 continue;
             String key = buildKey(s.getProduct().getId());
             // 注意: 这里写入的是 amount (可用库存), 不包含 frozen
-            redisTemplate.opsForValue().set(key, String.valueOf(s.getAmount()));
+            // 设置 TTL 防止已删除商品的 Key 永久残留
+            redisTemplate.opsForValue().set(key, String.valueOf(s.getAmount()),
+                    STOCK_KEY_TTL_DAYS, TimeUnit.DAYS);
         }
         log.info("已从数据库加载 {} 条库存记录到 Redis", all.size());
     }
@@ -186,11 +192,13 @@ public class StockRedisService {
     private void loadStockFromDB(Integer productId) {
         Stockpile s = stockpileRepository.findByProductId(productId);
         if (s == null) {
-            // 商品不存在时写入 0, 避免反复穿透
-            redisTemplate.opsForValue().set(buildKey(productId), "0");
+            // 商品不存在时写入 0, 避免反复穿透（带 TTL 防止残留）
+            redisTemplate.opsForValue().set(buildKey(productId), "0",
+                    STOCK_KEY_TTL_DAYS, TimeUnit.DAYS);
             return;
         }
-        redisTemplate.opsForValue().set(buildKey(productId), String.valueOf(s.getAmount()));
+        redisTemplate.opsForValue().set(buildKey(productId), String.valueOf(s.getAmount()),
+                STOCK_KEY_TTL_DAYS, TimeUnit.DAYS);
     }
 
     private String buildKey(Integer productId) {

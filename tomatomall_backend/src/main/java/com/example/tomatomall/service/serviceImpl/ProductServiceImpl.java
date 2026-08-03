@@ -8,6 +8,9 @@ import com.example.tomatomall.service.ProductService;
 import com.example.tomatomall.utils.*;
 import com.example.tomatomall.vo.ProductVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Service;
 
@@ -78,13 +81,13 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public List<ProductVO> getAllProducts() {
-        List<Product> products = productRepository.findAll();
+    public Page<ProductVO> getAllProducts(Pageable pageable) {
+        Page<Product> productPage = productRepository.findAll(pageable);
         List<ProductVO> productVOList = new ArrayList<>();
-        for (Product product : products) {
+        for (Product product : productPage.getContent()) {
             productVOList.add(product.toVO());
         }
-        return productVOList;
+        return new PageImpl<>(productVOList, pageable, productPage.getTotalElements());
     }
 
     @Override

@@ -31,7 +31,9 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         if (token != null && authUtil.verifyToken(token)) {
-            request.getSession().setAttribute("currentUser",authUtil.getAccount(token));
+            // 仅在 Session 中存储 userId，避免 JPA 实体长时间驻留堆内存导致 OOM
+            Integer userId = authUtil.getUserId(token);
+            request.getSession().setAttribute("currentUserId", userId);
             return true;
         }else {
             throw TomatoMallException.notLogin();

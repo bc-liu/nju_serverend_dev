@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.util.UUID;
 
 @RestController
@@ -21,9 +22,9 @@ public class UploadController {
 
     @PostMapping
     public Response<String> uploadImage(@RequestParam("file") MultipartFile file) {
-        try {
+        try (InputStream inputStream = file.getInputStream()) {
             String filename = UUID.randomUUID() + "_" + file.getOriginalFilename();
-            String url = ossUtil.upload(filename, file.getInputStream());
+            String url = ossUtil.upload(filename, inputStream);
             return Response.buildSuccess(url);
         } catch (Exception e) {
             throw new RuntimeException("上传失败");

@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.time.LocalDateTime;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +57,10 @@ public class CartServiceImpl implements CartService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    @Qualifier("asyncTaskExecutor")
+    private Executor asyncTaskExecutor;
 
     public CartVO addToCart(Integer productId, Integer quantity) {
         Product product = productRepository.findById(productId).orElseThrow(TomatoMallException::productNotFound);
@@ -168,7 +174,8 @@ public class CartServiceImpl implements CartService {
             Integer orderId = orders.getOrderId();
             List<Integer> cartItemIdsSnapshot = new ArrayList<>(cartItemId);
             CompletableFuture.runAsync(() -> publishOrderCreatedEvent(orderId, currentUser.getId(), orders.getTotalAmount(),
-                    paymentMethod, orders.getStatus(), orders.getCreateTime(), shoppingAddress, cartItemIdsSnapshot));
+                    paymentMethod, orders.getStatus(), orders.getCreateTime(), shoppingAddress, cartItemIdsSnapshot),
+                    asyncTaskExecutor);
 
             return orders.toVO();
 

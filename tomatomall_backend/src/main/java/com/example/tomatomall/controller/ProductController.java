@@ -5,9 +5,13 @@ import com.example.tomatomall.service.ProductService;
 import com.example.tomatomall.vo.ProductVO;
 import com.example.tomatomall.vo.Response;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/products") // 所有接口都以 /api/products 开头
@@ -16,10 +20,17 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
-    // 获取所有商品
+    // 获取所有商品（分页）
     @GetMapping
-    public Response<List<ProductVO>> getAllProducts() {
-        return Response.buildSuccess(productService.getAllProducts());
+    public Response<Map<String, Object>> getAllProducts(Pageable pageable) {
+        Page<ProductVO> page = productService.getAllProducts(pageable);
+        Map<String, Object> result = new HashMap<>();
+        result.put("content", page.getContent());
+        result.put("totalElements", page.getTotalElements());
+        result.put("totalPages", page.getTotalPages());
+        result.put("number", page.getNumber());
+        result.put("size", page.getSize());
+        return Response.buildSuccess(result);
     }
 
     // 根据 ID 获取商品

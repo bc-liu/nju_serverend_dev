@@ -57,8 +57,12 @@ public class AuthUtil {
         }
     }
 
+    public Integer getUserId(String token) {
+        return Integer.parseInt(JWT.decode(token).getAudience().get(0));
+    }
+
     public Account getAccount(String token){
-        Integer userId=Integer.parseInt(JWT.decode(token).getAudience().get(0));
+        Integer userId = getUserId(token);
         return accountRepository.findById(userId).get();
     }
 }

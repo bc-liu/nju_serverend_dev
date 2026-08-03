@@ -32,14 +32,22 @@ public class OssUtil {
         }
 
         OSS ossClient = new OSSClientBuilder().build(endpoint, accessKeyId, accessKeySecret);
-        PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, objectName, inputStream);
         String url;
         try {
+            PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, objectName, inputStream);
             ossClient.putObject(putObjectRequest);
             // 生成带过期时间的可访问 URL（这里设置为 1 天）
             Date expiration = new Date(System.currentTimeMillis() + 24L * 3600 * 1000);
             url = ossClient.generatePresignedUrl(bucketName, objectName, expiration).toString().split("\\?Expires")[0];
         } finally {
+            // 关闭 InputStream，防止资源泄漏导致原生内存 OOM
+            try {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+            } catch (IOException e) {
+                // 流关闭失败不影响主流程
+            }
             if (ossClient != null) {
                 ossClient.shutdown();
             }

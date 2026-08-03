@@ -10,9 +10,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -65,7 +65,8 @@ public class RedisCacheUtil implements DisposableBean {
             BloomFilterUtil bloomFilter) {
         String cacheKey = PRODUCT_CACHE_PREFIX + key;
 
-        if (bloomFilter != null) {
+        // 布隆过滤器防穿透：若 key 确定不存在，直接返回 null，避免穿透到 DB
+        if (bloomFilter != null && !bloomFilter.mightContain(key)) {
             return null;
         }
 
@@ -267,8 +268,7 @@ public class RedisCacheUtil implements DisposableBean {
      * 获取带随机因子的过期时间
      */
     private long getRandomExpireTime() {
-        Random random = new Random();
-        long randomOffset = random.nextInt((int) RANDOM_EXPIRE_RANGE);
+        long randomOffset = ThreadLocalRandom.current().nextInt((int) RANDOM_EXPIRE_RANGE);
         return DEFAULT_EXPIRE_MINUTES + randomOffset;
     }
 

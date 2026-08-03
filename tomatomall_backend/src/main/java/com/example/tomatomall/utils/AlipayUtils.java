@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -26,6 +27,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import static com.alipay.api.AlipayConstants.FORMAT;
 import static com.alipay.api.AlipayConstants.FORMAT_JSON;
@@ -58,6 +60,10 @@ public class AlipayUtils {
 
     @Autowired(required = false)
     private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+
+    @Autowired
+    @Qualifier("asyncTaskExecutor")
+    private Executor asyncTaskExecutor;
 
     public PayResponse pay(Integer orderId) {
         Orders orders = ordersRepository.findById(orderId).orElseThrow(TomatoMallException::orderNotFound);
@@ -159,7 +165,7 @@ public class AlipayUtils {
                 Integer orderId = Integer.parseInt(params.get("out_trade_no"));
                 ordersService.updateOrderSuccess(orderId);
 
-                CompletableFuture.runAsync(() -> publishOrderPaidEvent(orderId, params));
+                CompletableFuture.runAsync(() -> publishOrderPaidEvent(orderId, params), asyncTaskExecutor);
             } else {
                 // 验签失败：记录非法回调拦截
                 System.out.println("=========非法回调拦截（验签失败）========");
